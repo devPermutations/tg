@@ -8,6 +8,7 @@ mod api;
 mod init;
 mod access;
 mod send;
+mod listen;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
@@ -75,7 +76,7 @@ fn main() -> anyhow::Result<()> {
         Command::Init { token, tmux_target, force } =>
             init::run(init::InitOpts { token, tmux_target, force }),
         Command::Install => todo!("Task 14: install"),
-        Command::Listen => todo!("Task 13: listen"),
+        Command::Listen => listen::run(&cli.api_base, &cli.tmux_bin),
         Command::Send { chat_id, text, file, format, reply_to } =>
             send::run(send::SendOpts { chat_id, text, files: file, format, reply_to }, &cli.api_base),
         Command::Allow { chat_id, label } => access::allow(chat_id, label),
