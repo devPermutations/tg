@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod paths;
+mod config;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
