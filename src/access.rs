@@ -9,14 +9,29 @@ use crate::paths;
 use chrono::Utc;
 use crate::pending::PendingStore;
 
+/// Outcome of attempting to add a chat to the allowlist.
+#[derive(Debug)]
+pub enum AllowError {
+    /// The chat_id is already in the allowlist.
+    Duplicate(i64),
+}
+
+impl std::fmt::Display for AllowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AllowError::Duplicate(id) => write!(f, "chat_id {id} already in allowlist"),
+        }
+    }
+}
+
+impl std::error::Error for AllowError {}
+
 pub fn allow(chat_id: i64, label: Option<String>) -> Result<()> {
     let path = paths::config_path();
     let mut cfg = Config::load(&path)?;
-    if cfg.allow.iter().any(|e| e.chat_id == chat_id) {
-        return Err(anyhow!("chat_id {chat_id} already in allowlist"));
-    }
-    cfg.allow.push(AllowEntry { chat_id, label });
+    append_allow(&mut cfg, chat_id, label).map_err(|e| anyhow!("{e}"))?;
     cfg.save(&path)?;
+    tracing::info!("allowlist mutation: added chat_id {chat_id}");
     println!("added chat_id {chat_id}");
     Ok(())
 }
@@ -30,20 +45,16 @@ pub fn deny(chat_id: i64) -> Result<()> {
         return Err(anyhow!("chat_id {chat_id} not in allowlist"));
     }
     cfg.save(&path)?;
+    tracing::info!("allowlist mutation: removed chat_id {chat_id}");
     println!("removed chat_id {chat_id}");
     Ok(())
 }
 
 pub fn list() -> Result<()> {
     let cfg = Config::load(&paths::config_path())?;
-    if cfg.allow.is_empty() && cfg.owner_chat_id.is_none() {
-        println!("(allowlist empty, no owner set)");
+    if cfg.allow.is_empty() {
+        println!("(allowlist empty)");
         return Ok(());
-    }
-    if let Some(owner) = cfg.owner_chat_id {
-        if !cfg.allow.iter().any(|e| e.chat_id == owner) {
-            println!("{}\t(owner, no allow entry)\t(owner)", owner);
-        }
     }
     for e in &cfg.allow {
         let label = e.label.as_deref().unwrap_or("(no label)");
@@ -59,12 +70,25 @@ pub fn set_owner(chat_id: Option<i64>, unset: bool) -> Result<()> {
     match (chat_id, unset) {
         (Some(id), false) => {
             cfg.owner_chat_id = Some(id);
+            // Owner ⊆ allowlist invariant: ensure the owner has an
+            // entry. If they're already in [[allow]], leave the label
+            // alone. If not, add them with label "owner".
+            if !cfg.allow.iter().any(|e| e.chat_id == id) {
+                cfg.allow.push(AllowEntry {
+                    chat_id: id,
+                    label: Some("owner".to_string()),
+                });
+            }
             cfg.save(&path)?;
+            tracing::info!("owner mutation: set owner_chat_id to {id}");
             println!("owner_chat_id set to {id}");
         }
         (None, true) => {
             cfg.owner_chat_id = None;
+            // Don't remove the allow entry — they're still a known
+            // contact, just no longer the inbound-delivery owner.
             cfg.save(&path)?;
+            tracing::info!("owner mutation: unset owner_chat_id");
             println!("owner_chat_id unset (all allowlisted senders will deliver)");
         }
         _ => return Err(anyhow!("pass exactly one of --chat-id N or --unset")),
@@ -72,10 +96,12 @@ pub fn set_owner(chat_id: Option<i64>, unset: bool) -> Result<()> {
     Ok(())
 }
 
-// Used by the pair subcommand (Task 11) and the listen daemon (Task 13).
-pub fn append_allow(cfg: &mut Config, chat_id: i64, label: Option<String>) -> Result<()> {
+// Used by the pair subcommand and the set_owner helper. Returns a
+// typed error so callers can match on the duplicate case without
+// stringly-typed grepping.
+pub fn append_allow(cfg: &mut Config, chat_id: i64, label: Option<String>) -> std::result::Result<(), AllowError> {
     if cfg.allow.iter().any(|e| e.chat_id == chat_id) {
-        return Err(anyhow!("chat_id {chat_id} already in allowlist"));
+        return Err(AllowError::Duplicate(chat_id));
     }
     cfg.allow.push(AllowEntry { chat_id, label });
     Ok(())
@@ -109,10 +135,9 @@ pub fn pair(code: &str, api_base: &str) -> Result<()> {
         Ok(()) => {
             cfg.save(&cfg_path)?;
         }
-        Err(e) if e.to_string().contains("already") => {
+        Err(AllowError::Duplicate(_)) => {
             // Already paired (race or rerun) — proceed to remove pending entry.
         }
-        Err(e) => return Err(e),
     }
     store.remove(chat_id);
     store.save(&pending_path)?;
@@ -123,6 +148,7 @@ pub fn pair(code: &str, api_base: &str) -> Result<()> {
     if let Err(e) = client.send_message(chat_id, "Paired. You can now send messages.", None, None) {
         tracing::warn!("pair confirm reply failed for {chat_id}: {e}");
     }
+    tracing::info!("pairing mutation: paired chat_id {chat_id}");
     println!("paired chat_id {chat_id}");
     Ok(())
 }
@@ -154,6 +180,7 @@ pub fn reject(chat_id: i64) -> Result<()> {
         return Err(anyhow!("chat_id {chat_id} not pending"));
     }
     store.save(&path)?;
+    tracing::info!("pairing mutation: rejected pending chat_id {chat_id}");
     println!("dropped pending chat_id {chat_id}");
     Ok(())
 }
@@ -307,5 +334,57 @@ mod tests {
         result.unwrap();
         let store2 = store2_result.unwrap();
         assert!(store2.get(7).is_none());
+    }
+
+    #[test]
+    fn set_owner_appends_to_allowlist_when_missing() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        seed(dir.path());
+        let result = set_owner(Some(99), false);
+        let cfg_result = Config::load(&paths::config_path());
+        std::env::remove_var("TG_HOME");
+
+        result.unwrap();
+        let cfg = cfg_result.unwrap();
+        assert_eq!(cfg.owner_chat_id, Some(99));
+        assert_eq!(cfg.allow.len(), 1, "owner should be auto-added to allowlist");
+        assert_eq!(cfg.allow[0].chat_id, 99);
+        assert_eq!(cfg.allow[0].label.as_deref(), Some("owner"));
+    }
+
+    #[test]
+    fn set_owner_keeps_existing_entry_label() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        seed(dir.path());
+        // Pre-add owner with a meaningful label.
+        let pre = allow(99, Some("virgil".into()));
+        let result = set_owner(Some(99), false);
+        let cfg_result = Config::load(&paths::config_path());
+        std::env::remove_var("TG_HOME");
+
+        pre.unwrap();
+        result.unwrap();
+        let cfg = cfg_result.unwrap();
+        assert_eq!(cfg.allow.len(), 1, "should NOT duplicate");
+        assert_eq!(cfg.allow[0].label.as_deref(), Some("virgil"), "should preserve existing label");
+    }
+
+    #[test]
+    fn unset_owner_keeps_allow_entry() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        seed(dir.path());
+        let setup1 = set_owner(Some(99), false);
+        let setup2 = set_owner(None, true);
+        let cfg_result = Config::load(&paths::config_path());
+        std::env::remove_var("TG_HOME");
+
+        setup1.unwrap();
+        setup2.unwrap();
+        let cfg = cfg_result.unwrap();
+        assert_eq!(cfg.owner_chat_id, None);
+        assert_eq!(cfg.allow.len(), 1, "allow entry should NOT be removed on unset-owner");
     }
 }
