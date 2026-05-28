@@ -31,6 +31,24 @@ impl Client {
         format!("{}/bot{}/{}", self.api_base.trim_end_matches('/'), self.token, method)
     }
 
+    /// Build an error message with the bot token redacted from any
+    /// embedded URL.
+    ///
+    /// The Telegram Bot API embeds the token in the URL path
+    /// (`/bot{token}/...`). `ureq`'s `Display` for transport and HTTP
+    /// errors includes the full URL, and we forward those errors to
+    /// `tracing` and `anyhow`. Without this guard, transient API
+    /// failures persist the token to journald and any stderr capture
+    /// downstream (cron, CI, `ir run`).
+    ///
+    /// Every `ureq` call site in this module routes its `Err` through
+    /// `redact_err` so the token never reaches a log or error chain.
+    fn redact_err(&self, prefix: &str, e: impl std::fmt::Display) -> anyhow::Error {
+        let raw = format!("{prefix}: {e}");
+        let safe = raw.replace(&self.token, "[REDACTED]");
+        anyhow!(safe)
+    }
+
     /// POST application/json. Used for plain text endpoints.
     fn post_json<T: Serialize, R: serde::de::DeserializeOwned>(
         &self, method: &str, body: &T,
@@ -38,8 +56,9 @@ impl Client {
         let url = self.endpoint(method);
         let resp = self.agent.post(&url)
             .send_json(serde_json::to_value(body)?)
-            .with_context(|| format!("POST {method}"))?;
-        let parsed: ApiResponse<R> = resp.into_json()?;
+            .map_err(|e| self.redact_err(&format!("POST {method}"), e))?;
+        let parsed: ApiResponse<R> = resp.into_json()
+            .map_err(|e| self.redact_err(&format!("parse {method} response"), e))?;
         parsed.into_result()
     }
 
@@ -107,8 +126,9 @@ impl Client {
         let resp = self.agent.post(&url)
             .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
             .send_bytes(&body)
-            .with_context(|| format!("POST {method} (multipart)"))?;
-        let parsed: ApiResponse<Message> = resp.into_json()?;
+            .map_err(|e| self.redact_err(&format!("POST {method} (multipart)"), e))?;
+        let parsed: ApiResponse<Message> = resp.into_json()
+            .map_err(|e| self.redact_err(&format!("parse {method} response"), e))?;
         parsed.into_result()
     }
 
@@ -162,8 +182,13 @@ impl Client {
             .ok_or_else(|| anyhow!("getFile response has no file_path"))?;
         let url = format!("{}/file/bot{}/{}",
             self.api_base.trim_end_matches('/'), self.token, path);
+        // The URL contains the token; redact_err strips it before the
+        // error is surfaced to a log or caller. Do not add a
+        // `.with_context(|url|)` here — that would re-inject the URL
+        // and defeat redaction downstream.
         let resp = self.agent.get(&url).call()
-            .with_context(|| format!("GET {url}"))?;
+            .map_err(|e| self.redact_err(
+                &format!("GET file from telegram ({})", file.file_unique_id), e))?;
         let mut reader = resp.into_reader();
         if let Some(parent) = dest.parent() { std::fs::create_dir_all(parent)?; }
         let mut out = std::fs::File::create(dest)?;
@@ -330,6 +355,56 @@ mod tests {
         let c = Client::new(base, "TOKEN");
         let err = c.send_message(1, "hi", None, None).unwrap_err().to_string();
         assert!(err.contains("chat not found"), "got: {err}");
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn token_does_not_leak_in_transport_error() {
+        // Bind a socket so the mock URL resolves, then drop it. The
+        // OS will refuse subsequent connections to that port → ureq
+        // returns a transport error with the URL embedded.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let secret = "REAL_SECRET_BOT_TOKEN_12345:abcdef";
+        let c = Client::new(format!("http://127.0.0.1:{port}"), secret);
+
+        // Any call would do; getUpdates is the simplest.
+        let err = c.get_updates(0, 1).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(
+            !chain.contains(secret),
+            "token leaked into error chain: {chain}"
+        );
+        // Sanity: the redaction marker should be present so we know
+        // redact_err actually ran on this path.
+        assert!(
+            chain.contains("[REDACTED]"),
+            "redaction marker missing from error chain: {chain}"
+        );
+    }
+
+    #[test]
+    fn token_does_not_leak_in_http_error() {
+        // Mock that returns 500 with a non-JSON body — exercises the
+        // post_json -> into_json error branch.
+        let (base, join) = spawn_mock(|req| {
+            req.respond(
+                tiny_http::Response::from_string("internal server error")
+                    .with_status_code(500),
+            )
+            .unwrap();
+        });
+
+        let secret = "PRIVATE_TOKEN_AAAA:bbbbbbbbbbbbbbbbbbb";
+        let c = Client::new(base, secret);
+        let err = c.send_message(1, "hi", None, None).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(
+            !chain.contains(secret),
+            "token leaked into error chain: {chain}"
+        );
         join.join().unwrap();
     }
 
