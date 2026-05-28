@@ -10,7 +10,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 pub const CODE_LEN: usize = 6;
-pub const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+pub(crate) const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 pub const EXPIRY_HOURS: i64 = 1;
 pub const REMINDER_THROTTLE_SECS: i64 = 30;
 
@@ -33,6 +33,7 @@ pub struct PendingStore {
 impl PendingStore {
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() { return Ok(Self::default()); }
+        crate::paths::check_mode_strict(path)?;
         let body = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let store: PendingStore = serde_json::from_str(&body)
@@ -54,6 +55,8 @@ impl PendingStore {
                 .mode(0o600)
                 .open(&tmp)?;
             f.write_all(body.as_bytes())?;
+            f.flush()?;
+            f.sync_all()?;
         }
         std::fs::rename(&tmp, path)?;
         Ok(())
@@ -147,5 +150,17 @@ mod tests {
         s.insert_new(7, None, now());
         assert!(s.remove(7).is_some());
         assert!(s.remove(7).is_none());
+    }
+
+    #[test]
+    fn save_sets_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("pending.json");
+        let mut s = PendingStore::default();
+        s.insert_new(1, None, now());
+        s.save(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

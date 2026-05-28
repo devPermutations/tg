@@ -4,7 +4,6 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -24,7 +23,7 @@ pub struct AllowEntry {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        check_mode_strict(path)?;
+        crate::paths::check_mode_strict(path)?;
         let body = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let cfg: Config = toml::from_str(&body)
@@ -49,6 +48,8 @@ impl Config {
                 .mode(0o600)
                 .open(&tmp)?;
             f.write_all(body.as_bytes())?;
+            f.flush()?;
+            f.sync_all()?;
         }
         std::fs::rename(&tmp, path)?;
         Ok(())
@@ -57,18 +58,6 @@ impl Config {
     pub fn is_allowed(&self, chat_id: i64) -> bool {
         self.allow.iter().any(|e| e.chat_id == chat_id)
     }
-}
-
-fn check_mode_strict(path: &Path) -> Result<()> {
-    let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
-        return Err(anyhow!(
-            "{} mode is {:o}; refusing to read (must be 0600)",
-            path.display(),
-            mode
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

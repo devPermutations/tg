@@ -1,5 +1,7 @@
 //! Resolves ~/.tg/ paths, with TG_HOME override for tests.
 
+use anyhow::{anyhow, Result};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn tg_home() -> PathBuf {
@@ -17,6 +19,20 @@ pub fn inbox_dir() -> PathBuf { tg_home().join("inbox") }
 
 pub fn ensure_dir(p: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(p)
+}
+
+/// Refuses to read paths whose mode is wider than 0600. Used by any
+/// module that loads a secret/token-bearing file.
+pub fn check_mode_strict(path: &Path) -> Result<()> {
+    let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(anyhow!(
+            "{} mode is {:o}; refusing to read (must be 0600)",
+            path.display(),
+            mode
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
