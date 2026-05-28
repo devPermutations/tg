@@ -38,12 +38,21 @@ pub fn run(opts: InitOpts) -> Result<()> {
         }
     };
 
+    let mut allow = Vec::new();
+    if let Some(owner) = opts.owner_chat_id {
+        allow.push(crate::config::AllowEntry {
+            chat_id: owner,
+            label: Some("owner".to_string()),
+        });
+    }
     let cfg = Config {
+        schema_version: 1,
         bot_token: token,
         tmux_target,
         owner_chat_id: opts.owner_chat_id,
+        transcription: None,
         whisper_url: None,
-        allow: vec![],
+        allow,
     };
     cfg.save(&path)?;
     println!("wrote {} (mode 0600)", path.display());
@@ -113,6 +122,30 @@ mod tests {
         let cfg = Config::load(&cfg_path).unwrap();
         assert_eq!(cfg.bot_token, "TOKEN");
         assert_eq!(cfg.tmux_target, "root:1");
+    }
+
+    #[test]
+    fn writes_owner_as_allowlist_entry() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        std::env::set_var("TG_HOME", dir.path());
+        let opts = InitOpts {
+            token: Some("T".into()),
+            tmux_target: Some("x".into()),
+            owner_chat_id: Some(123),
+            force: false,
+        };
+        let run_result = run(opts);
+        let cfg_path = paths::config_path();
+        std::env::remove_var("TG_HOME");
+
+        run_result.unwrap();
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.owner_chat_id, Some(123));
+        assert_eq!(cfg.allow.len(), 1, "owner should be appended to allowlist");
+        assert_eq!(cfg.allow[0].chat_id, 123);
+        assert_eq!(cfg.allow[0].label.as_deref(), Some("owner"));
+        assert_eq!(cfg.schema_version, 1);
     }
 
     #[test]

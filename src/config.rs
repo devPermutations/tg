@@ -8,6 +8,11 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
+    /// Schema version. Defaults to 1 if absent (pre-0.6 configs).
+    /// Forward-compat marker; future versions can branch on this to
+    /// migrate or refuse to load.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub bot_token: String,
     pub tmux_target: String,
     /// The single chat_id whose inbound DMs are delivered to the tmux
@@ -17,15 +22,28 @@ pub struct Config {
     /// (pre-0.2 behavior).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_chat_id: Option<i64>,
-    /// If set, inbound voice and audio attachments are transcribed by
-    /// POSTing to `{whisper_url}/inference` (whisper.cpp's HTTP
-    /// server API). The transcript is appended to the typed prompt
-    /// line. Example: "http://127.0.0.1:8178". Default: no
-    /// transcription.
+    /// New in 0.6: structured transcription config. Old `whisper_url`
+    /// at top level still parses (via TranscriptionConfig::from_legacy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<TranscriptionConfig>,
+    /// Legacy 0.5 field. Kept for one minor's worth of migration: if
+    /// `transcription` is unset and `whisper_url` is set, the loader
+    /// promotes it into `transcription`. Will be removed in 0.7.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whisper_url: Option<String>,
     #[serde(default)]
     pub allow: Vec<AllowEntry>,
+}
+
+fn default_schema_version() -> u32 { 1 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TranscriptionConfig {
+    /// Backend identifier. Currently only "whisper-cpp" is supported.
+    /// Future: "deepgram", "openai", etc. — the loader will branch on
+    /// this field when more than one backend exists.
+    pub backend: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +99,23 @@ impl Config {
         Some(chat_id) == self.owner_chat_id
     }
 
+    /// Returns the configured whisper URL, preferring the new
+    /// `[transcription]` table over the legacy `whisper_url` field.
+    /// Returns `None` if no transcription is configured.
+    ///
+    /// This is the only function callers should use to read the
+    /// whisper URL — it handles the 0.5 → 0.6 migration transparently.
+    pub fn whisper_url(&self) -> Option<&str> {
+        // Prefer the new field if present and backend matches.
+        if let Some(tx) = &self.transcription {
+            if tx.backend == "whisper-cpp" && !tx.url.is_empty() {
+                return Some(&tx.url);
+            }
+        }
+        // Fall back to the legacy top-level field.
+        self.whisper_url.as_deref()
+    }
+
     /// True if inbound delivery to tmux should occur for `chat_id`.
     /// - If `owner_chat_id` is set: only the owner delivers.
     /// - If not set: any allowlisted sender delivers (pre-0.2 behavior).
@@ -100,9 +135,11 @@ mod tests {
 
     fn sample() -> Config {
         Config {
+            schema_version: 1,
             bot_token: "TOKEN".into(),
             tmux_target: "root:1".into(),
             owner_chat_id: None,
+            transcription: None,
             whisper_url: None,
             allow: vec![AllowEntry { chat_id: 1, label: Some("alice".into()) }],
         }
@@ -149,9 +186,11 @@ mod tests {
     #[test]
     fn owner_is_implicitly_allowed_even_without_allow_entry() {
         let cfg = Config {
+            schema_version: 1,
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: Some(99),
+            transcription: None,
             whisper_url: None,
             allow: vec![],
         };
@@ -163,9 +202,11 @@ mod tests {
     #[test]
     fn delivers_inbound_only_for_owner_when_set() {
         let cfg = Config {
+            schema_version: 1,
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: Some(99),
+            transcription: None,
             whisper_url: None,
             allow: vec![
                 AllowEntry { chat_id: 99, label: Some("me".into()) },
@@ -186,9 +227,11 @@ mod tests {
     fn delivers_inbound_for_all_when_no_owner() {
         // pre-0.2 behavior: owner_chat_id None means everyone allowlisted delivers.
         let cfg = Config {
+            schema_version: 1,
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: None,
+            transcription: None,
             whisper_url: None,
             allow: vec![
                 AllowEntry { chat_id: 99, label: None },
@@ -212,5 +255,57 @@ chat_id = 42
         let cfg: Config = toml::from_str(body).unwrap();
         assert_eq!(cfg.owner_chat_id, None);
         assert_eq!(cfg.allow.len(), 1);
+        assert_eq!(cfg.schema_version, 1, "default schema_version should be 1");
+        assert!(cfg.whisper_url().is_none());
+    }
+
+    #[test]
+    fn legacy_whisper_url_field_still_works() {
+        // 0.5-style config with bare whisper_url at top level.
+        let body = r#"
+schema_version = 1
+bot_token = "T"
+tmux_target = "x"
+whisper_url = "http://127.0.0.1:8178"
+"#;
+        let cfg: Config = toml::from_str(body).unwrap();
+        assert_eq!(cfg.whisper_url(), Some("http://127.0.0.1:8178"));
+    }
+
+    #[test]
+    fn new_transcription_table_takes_precedence() {
+        // 0.6-style config with the structured [transcription] table.
+        let body = r#"
+schema_version = 1
+bot_token = "T"
+tmux_target = "x"
+whisper_url = "http://legacy:8178"
+
+[transcription]
+backend = "whisper-cpp"
+url = "http://new:8178"
+"#;
+        let cfg: Config = toml::from_str(body).unwrap();
+        assert_eq!(
+            cfg.whisper_url(),
+            Some("http://new:8178"),
+            "new [transcription] table should win over legacy field"
+        );
+    }
+
+    #[test]
+    fn transcription_with_unknown_backend_falls_back_to_none() {
+        let body = r#"
+schema_version = 1
+bot_token = "T"
+tmux_target = "x"
+
+[transcription]
+backend = "future-backend-we-dont-know-yet"
+url = "http://wat:1234"
+"#;
+        let cfg: Config = toml::from_str(body).unwrap();
+        // Unknown backend → whisper_url() returns None (we don't know how to use it).
+        assert_eq!(cfg.whisper_url(), None);
     }
 }
