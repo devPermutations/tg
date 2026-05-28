@@ -42,6 +42,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
         bot_token: token,
         tmux_target,
         owner_chat_id: opts.owner_chat_id,
+        whisper_url: None,
         allow: vec![],
     };
     cfg.save(&path)?;

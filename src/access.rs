@@ -171,6 +171,7 @@ mod tests {
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: None,
+            whisper_url: None,
             allow: vec![],
         };
         cfg.save(&paths::config_path()).unwrap();

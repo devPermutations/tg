@@ -10,6 +10,7 @@ mod access;
 mod send;
 mod listen;
 mod install;
+mod transcribe;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]

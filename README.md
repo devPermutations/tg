@@ -151,6 +151,43 @@ When a message has media but no caption, a stand-in label appears:
 Inbound video, animation (GIF), and video_note types are currently
 unsupported — they render as `(unsupported media)` with no download.
 
+### Voice transcription (optional)
+
+If you set `whisper_url` in `config.toml` to a
+[whisper.cpp HTTP server](https://github.com/ggerganov/whisper.cpp/tree/master/examples/server),
+`tg listen` will transcribe inbound voice and audio attachments before
+delivering the prompt line, appending `[transcript: ...]`:
+
+```toml
+whisper_url = "http://127.0.0.1:8178"
+```
+
+Pipeline: download the OGG/MP3 → `ffmpeg` to 16 kHz mono WAV → POST to
+`{whisper_url}/inference` (multipart, `response_format=json`) → parse
+`{"text":"..."}` → append to the typed line.
+
+Quick container setup:
+
+```bash
+mkdir -p ~/whisper-models
+wget -O ~/whisper-models/ggml-base.en.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+docker run -d --name whisper-server --restart unless-stopped \
+  -p 8178:8080 \
+  -v ~/whisper-models:/models:ro \
+  --entrypoint /app/build/bin/whisper-server \
+  ghcr.io/ggml-org/whisper.cpp:main \
+  --host 0.0.0.0 --port 8080 -m /models/ggml-base.en.bin
+```
+
+Requires `ffmpeg` on the host running `tg listen`. The 5 MB audio
+size cap is hard-coded; oversized files skip transcription with a
+warning log.
+
+If transcription fails (whisper down, ffmpeg missing, network blip,
+audio empty), the message still delivers — just with `[file: ...]`
+and no `[transcript: ...]`.
+
 ## Subcommands
 
 | Command | Purpose |

@@ -94,7 +94,30 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
     let (body, attachment_path) = build_body(&msg, client)?;
     let line = tmux::format_inbound(user_label.as_deref(), chat_id, &body);
     let final_line = match attachment_path {
-        Some(p) => format!("{line} [file: {}]", p.display()),
+        Some(p) => {
+            let mut s = format!("{line} [file: {}]", p.display());
+            // Transcribe voice/audio synchronously before the send-keys
+            // so the agent sees one complete prompt line. The pane will
+            // sit silent for a few seconds while whisper runs; that's
+            // fine — beats injecting `(voice 0:12) [file: ...]` then a
+            // separate prompt with the transcript later.
+            if let Some(whisper_url) = cfg.whisper_url.as_deref() {
+                if msg.voice.is_some() || msg.audio.is_some() {
+                    match crate::transcribe::transcribe(&p, whisper_url, "ffmpeg") {
+                        Ok(text) => {
+                            let safe = crate::tmux::sanitize(&text);
+                            s.push_str(&format!(" [transcript: {safe}]"));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "transcription failed for {}: {e:#}", p.display()
+                            );
+                        }
+                    }
+                }
+            }
+            s
+        }
         None => line,
     };
     tmux::send_line(tmux_bin, &cfg.tmux_target, &final_line)?;

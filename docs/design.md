@@ -163,6 +163,13 @@ tmux_target = "root:1"
 # behavior).
 owner_chat_id = 1234567890
 
+# Optional. If set, inbound voice and audio attachments are
+# transcribed by POSTing to `{whisper_url}/inference` (whisper.cpp's
+# HTTP server protocol). The transcript is appended to the typed
+# prompt line as `[transcript: ...]`. Requires ffmpeg on the host
+# running `tg listen` (for OGG → 16 kHz mono WAV conversion).
+whisper_url = "http://127.0.0.1:8178"
+
 [[allow]]
 chat_id = 1234567890
 label = "alice"

@@ -17,6 +17,13 @@ pub struct Config {
     /// (pre-0.2 behavior).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_chat_id: Option<i64>,
+    /// If set, inbound voice and audio attachments are transcribed by
+    /// POSTing to `{whisper_url}/inference` (whisper.cpp's HTTP
+    /// server API). The transcript is appended to the typed prompt
+    /// line. Example: "http://127.0.0.1:8178". Default: no
+    /// transcription.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whisper_url: Option<String>,
     #[serde(default)]
     pub allow: Vec<AllowEntry>,
 }
@@ -96,6 +103,7 @@ mod tests {
             bot_token: "TOKEN".into(),
             tmux_target: "root:1".into(),
             owner_chat_id: None,
+            whisper_url: None,
             allow: vec![AllowEntry { chat_id: 1, label: Some("alice".into()) }],
         }
     }
@@ -144,6 +152,7 @@ mod tests {
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: Some(99),
+            whisper_url: None,
             allow: vec![],
         };
         assert!(cfg.is_allowed(99));
@@ -157,6 +166,7 @@ mod tests {
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: Some(99),
+            whisper_url: None,
             allow: vec![
                 AllowEntry { chat_id: 99, label: Some("me".into()) },
                 AllowEntry { chat_id: 100, label: Some("brother".into()) },
@@ -179,6 +189,7 @@ mod tests {
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: None,
+            whisper_url: None,
             allow: vec![
                 AllowEntry { chat_id: 99, label: None },
                 AllowEntry { chat_id: 100, label: None },
