@@ -1,0 +1,26 @@
+[package]
+name = "tg"
+version = "0.1.0"
+edition = "2021"
+description = "Self-contained Telegram bot CLI: inbound daemon (tmux send-keys delivery) + outbound CLI (text + attachments)."
+
+[[bin]]
+name = "tg"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ureq = { version = "2", default-features = false, features = ["tls", "gzip", "json"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+mime_guess = "2"
+
+[dev-dependencies]
+tiny_http = "0.12"
+tempfile = "3"
