@@ -7,6 +7,8 @@
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration as StdDuration;
 
 use crate::api::{Client, Message, Update};
@@ -31,15 +33,46 @@ const OFFLINE_REPLY_THROTTLE_SECS: u64 = 30;
 
 pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     let cfg_path = paths::config_path();
-    let cfg = Config::load(&cfg_path)?;
-    let client = Client::new(api_base, cfg.bot_token.clone());
+    let mut cfg = Config::load(&cfg_path)?;
+    let mut client = Client::new(api_base, cfg.bot_token.clone());
     tracing::info!("tg listen starting; target={}", cfg.tmux_target);
+
+    let reload_requested = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGHUP, Arc::clone(&reload_requested))
+        .context("registering SIGHUP handler")?;
+    tracing::info!("SIGHUP handler installed (send SIGHUP to reload config)");
 
     let mut offset = read_offset()?;
     let mut backoff_secs: u64 = 1;
     let mut state = LoopState::default();
 
     loop {
+        // SIGHUP since the last iteration? Reload the config in place.
+        // get_updates is a long-poll (~30s) so reloads land within that
+        // window of the signal arriving.
+        if reload_requested.swap(false, Ordering::SeqCst) {
+            match Config::load(&cfg_path) {
+                Ok(new_cfg) => {
+                    let token_changed = new_cfg.bot_token != cfg.bot_token;
+                    tracing::info!(
+                        "SIGHUP: reloaded config (allowlist={}, owner_chat_id={:?}, token_changed={})",
+                        new_cfg.allow.len(),
+                        new_cfg.owner_chat_id,
+                        token_changed,
+                    );
+                    if token_changed {
+                        client = Client::new(api_base, new_cfg.bot_token.clone());
+                    }
+                    cfg = new_cfg;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "SIGHUP: config reload failed ({e:#}); keeping previous config"
+                    );
+                }
+            }
+        }
+
         match client.get_updates(offset, POLL_TIMEOUT_SECS) {
             Ok(updates) => {
                 backoff_secs = 1;

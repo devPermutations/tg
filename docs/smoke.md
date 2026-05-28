@@ -80,3 +80,38 @@ interaction with a Claude Code TUI, journald output).
     ```
     tg deny --chat-id NNN
     ```
+
+### Step 12: SIGHUP-based config reload
+
+1. While the daemon is running (`systemctl --user is-active tg-listen` →
+   `active`), edit the allowlist via the CLI:
+   ```
+   tg allow --chat-id 1234567890 --label test-add
+   ```
+   The daemon doesn't see it yet — the config is on disk but the running
+   process still has the old in-memory copy.
+
+2. Send the daemon a SIGHUP:
+   ```
+   systemctl --user kill --signal=HUP tg-listen
+   ```
+   (Alternatively: `kill -HUP $(pgrep -u $USER -f "tg listen")`.)
+
+3. Watch the journal:
+   ```
+   journalctl --user -u tg-listen -f
+   ```
+   Within ~30 seconds (one long-poll window), expect:
+   ```
+   INFO tg::listen: SIGHUP: reloaded config (allowlist=N, owner_chat_id=Some(M), token_changed=false)
+   ```
+
+4. Have the newly-added chat DM the bot. The message should now
+   reach your pane (or get the outbound-only silent-drop, depending
+   on whether they're the owner). Pre-SIGHUP they would have been
+   rejected.
+
+5. Optional: rotate the bot token via @BotFather, `tg init --force
+   --token <NEW>`, then SIGHUP. The reload log should show
+   `token_changed=true` and the daemon should keep polling under
+   the new token without restart.
