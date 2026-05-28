@@ -505,8 +505,8 @@ in one sitting. The recommended pre-release checklist:
 
 This is how the v0.5.1 token-leak vulnerability was found (audit
 finding → fixed in v0.5.2). The full audit-finding report for that
-issue is preserved in the v0.5.2 release notes and the corresponding
-[GitHub Security Advisory](https://github.com/devPermutations/tg/security/advisories).
+issue is preserved in the v0.5.2 release notes and in
+[GHSA-5pvm-3m24-8p3f](https://github.com/devPermutations/tg/security/advisories/GHSA-5pvm-3m24-8p3f).
 
 If you're evaluating `tg` for production-like use, run your own
 audit too — the small code surface makes that practical.

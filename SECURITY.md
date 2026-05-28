@@ -8,7 +8,7 @@ the `main` branch receives security fixes.
 | Version | Supported |
 | --- | --- |
 | 0.5.2 (latest) | ✅ |
-| 0.5.0 – 0.5.1 | ❌ Upgrade to 0.5.2 — see [GHSA-…](#) below |
+| 0.5.0 – 0.5.1 | ❌ Upgrade to 0.5.2 — see [GHSA-5pvm-3m24-8p3f](https://github.com/devPermutations/tg/security/advisories/GHSA-5pvm-3m24-8p3f) below |
 | < 0.5.0 | ❌ Pre-feature-freeze, not supported |
 
 If you're running an older version, upgrade with:
@@ -84,7 +84,7 @@ vulnerabilities:
 
 | Advisory | Affected versions | Patched in | Description |
 | --- | --- | --- | --- |
-| [GHSA-…](#) | v0.5.0 – v0.5.1 | v0.5.2 | Bot token leaked into `tg-listen` journald output via `ureq` error formatting. Local-account read-only. See [v0.5.2 release notes](https://github.com/devPermutations/tg/releases/tag/v0.5.2). |
+| [GHSA-5pvm-3m24-8p3f](https://github.com/devPermutations/tg/security/advisories/GHSA-5pvm-3m24-8p3f) | v0.5.0 – v0.5.1 | v0.5.2 | Bot token leaked into `tg-listen` journald output via `ureq` error formatting. Local-account read-only. See [v0.5.2 release notes](https://github.com/devPermutations/tg/releases/tag/v0.5.2). |
 
 ## Audit process
 
