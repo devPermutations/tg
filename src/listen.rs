@@ -15,7 +15,6 @@ use crate::pending::{PendingStore, REMINDER_THROTTLE_SECS};
 use crate::{paths, tmux};
 
 const POLL_TIMEOUT_SECS: u32 = 30;
-const STATE_FILE_TMP_SUFFIX: &str = ".tmp";
 
 pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     let cfg_path = paths::config_path();
@@ -187,7 +186,7 @@ fn read_offset() -> Result<i64> {
 fn write_offset(offset: i64) -> Result<()> {
     let p = paths::state_path();
     if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; }
-    let tmp = p.with_extension(format!("state{STATE_FILE_TMP_SUFFIX}"));
+    let tmp = p.with_file_name("state.tmp");
     std::fs::write(&tmp, offset.to_string())?;
     std::fs::rename(&tmp, &p)?;
     Ok(())
