@@ -9,6 +9,7 @@ mod init;
 mod access;
 mod send;
 mod listen;
+mod install;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
@@ -20,6 +21,10 @@ struct Cli {
     /// Hidden: override tmux binary path (for tests).
     #[arg(long, hide = true, global = true, default_value = "tmux")]
     tmux_bin: String,
+
+    /// Hidden: override systemctl binary path (for tests).
+    #[arg(long, hide = true, global = true, default_value = "systemctl")]
+    systemctl_bin: String,
 
     #[command(subcommand)]
     command: Command,
@@ -75,7 +80,10 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Init { token, tmux_target, force } =>
             init::run(init::InitOpts { token, tmux_target, force }),
-        Command::Install => todo!("Task 14: install"),
+        Command::Install => install::run(install::InstallOpts {
+            systemctl_bin: cli.systemctl_bin.clone(),
+            dry_run: false,
+        }),
         Command::Listen => listen::run(&cli.api_base, &cli.tmux_bin),
         Command::Send { chat_id, text, file, format, reply_to } =>
             send::run(send::SendOpts { chat_id, text, files: file, format, reply_to }, &cli.api_base),
