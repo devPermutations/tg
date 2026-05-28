@@ -59,6 +59,81 @@ impl Client {
         struct Req<'a> { chat_id: i64, text: &'a str }
         self.post_json("sendMessage", &Req { chat_id, text })
     }
+
+    /// POST multipart/form-data with one file field. Used for
+    /// sendPhoto/sendDocument. Builds the body by hand — ureq has no
+    /// multipart helper.
+    fn post_multipart(
+        &self,
+        method: &str,
+        fields: &[(&str, &str)],
+        file_field: &str,
+        file_name: &str,
+        file_mime: &str,
+        file_bytes: &[u8],
+    ) -> Result<Message> {
+        let boundary = format!("----tg-{}", rand::random::<u64>());
+        let mut body: Vec<u8> = Vec::new();
+        for (name, value) in fields {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
+            body.extend_from_slice(value.as_bytes());
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"{file_field}\"; filename=\"{file_name}\"\r\n").as_bytes()
+        );
+        body.extend_from_slice(format!("Content-Type: {file_mime}\r\n\r\n").as_bytes());
+        body.extend_from_slice(file_bytes);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        let url = self.endpoint(method);
+        let resp = self.agent.post(&url)
+            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .send_bytes(&body)
+            .with_context(|| format!("POST {method} (multipart)"))?;
+        let parsed: ApiResponse<Message> = resp.into_json()?;
+        parsed.into_result()
+    }
+
+    pub fn send_photo(
+        &self, chat_id: i64, file_path: &std::path::Path,
+        caption: Option<&str>, parse_mode: Option<&str>, reply_to: Option<i64>,
+    ) -> Result<Message> {
+        self.send_file("sendPhoto", "photo", chat_id, file_path, caption, parse_mode, reply_to)
+    }
+
+    pub fn send_document(
+        &self, chat_id: i64, file_path: &std::path::Path,
+        caption: Option<&str>, parse_mode: Option<&str>, reply_to: Option<i64>,
+    ) -> Result<Message> {
+        self.send_file("sendDocument", "document", chat_id, file_path, caption, parse_mode, reply_to)
+    }
+
+    fn send_file(
+        &self, method: &str, file_field: &str, chat_id: i64,
+        path: &std::path::Path, caption: Option<&str>,
+        parse_mode: Option<&str>, reply_to: Option<i64>,
+    ) -> Result<Message> {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+        let mime = mime_guess::from_path(path).first_or_octet_stream().to_string();
+        let chat_id_s = chat_id.to_string();
+        // Telegram's new `reply_parameters` field is a JSON object; the
+        // legacy `reply_to_message_id` scalar is still supported and is
+        // simpler to encode as a multipart form field.
+        let reply_to_s = reply_to.map(|i| i.to_string());
+        let mut fields: Vec<(&str, &str)> = vec![("chat_id", chat_id_s.as_str())];
+        if let Some(c) = caption { fields.push(("caption", c)); }
+        if let Some(pm) = parse_mode { fields.push(("parse_mode", pm)); }
+        if let Some(rs) = reply_to_s.as_deref() {
+            fields.push(("reply_to_message_id", rs));
+        }
+        self.post_multipart(method, &fields, file_field, name, &mime, &bytes)
+    }
 }
 
 /// Wrapper for Telegram's `{ok, result|description}` envelope.
@@ -130,6 +205,7 @@ pub struct Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::sync::Arc;
     use std::thread;
 
@@ -174,6 +250,36 @@ mod tests {
         let c = Client::new(base, "TOKEN");
         let err = c.send_message(1, "hi").unwrap_err().to_string();
         assert!(err.contains("chat not found"), "got: {err}");
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn send_photo_emits_multipart_with_chat_id() {
+        let (base, join) = spawn_mock(|mut req| {
+            assert!(req.url().ends_with("/sendPhoto"));
+            let ct = req.headers().iter()
+                .find(|h| h.field.equiv("Content-Type"))
+                .map(|h| h.value.as_str().to_string())
+                .unwrap_or_default();
+            assert!(ct.starts_with("multipart/form-data; boundary="));
+            let mut body = Vec::new();
+            req.as_reader().read_to_end(&mut body).unwrap();
+            let s = String::from_utf8_lossy(&body);
+            assert!(s.contains("name=\"chat_id\""));
+            assert!(s.contains("\r\n\r\n42\r\n"));
+            assert!(s.contains("name=\"photo\""));
+            let body_resp = r#"{"ok":true,"result":{"message_id":7,"chat":{"id":42,"type":"private"}}}"#;
+            req.respond(tiny_http::Response::from_string(body_resp)
+                .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap()))
+                .unwrap();
+        });
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"fakepng").unwrap();
+
+        let c = Client::new(base, "TOKEN");
+        let m = c.send_photo(42, tmp.path(), Some("cap"), None, None).unwrap();
+        assert_eq!(m.message_id, 7);
         join.join().unwrap();
     }
 }
