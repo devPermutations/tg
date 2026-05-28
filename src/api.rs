@@ -134,6 +134,36 @@ impl Client {
         }
         self.post_multipart(method, &fields, file_field, name, &mime, &bytes)
     }
+
+    pub fn get_file(&self, file_id: &str) -> Result<File> {
+        #[derive(Serialize)]
+        struct Req<'a> { file_id: &'a str }
+        self.post_json("getFile", &Req { file_id })
+    }
+
+    /// Downloads the file referenced by `File.file_path` and writes the
+    /// bytes to `dest`. Returns the number of bytes written.
+    pub fn download_file(&self, file: &File, dest: &std::path::Path) -> Result<u64> {
+        let path = file.file_path.as_deref()
+            .ok_or_else(|| anyhow!("getFile response has no file_path"))?;
+        let url = format!("{}/file/bot{}/{}",
+            self.api_base.trim_end_matches('/'), self.token, path);
+        let resp = self.agent.get(&url).call()
+            .with_context(|| format!("GET {url}"))?;
+        let mut reader = resp.into_reader();
+        if let Some(parent) = dest.parent() { std::fs::create_dir_all(parent)?; }
+        let mut out = std::fs::File::create(dest)?;
+        let n = std::io::copy(&mut reader, &mut out)?;
+        Ok(n)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct File {
+    pub file_id: String,
+    pub file_unique_id: String,
+    #[serde(default)] pub file_size: Option<u64>,
+    pub file_path: Option<String>,
 }
 
 /// Wrapper for Telegram's `{ok, result|description}` envelope.
@@ -279,6 +309,20 @@ mod tests {
         let c = Client::new(base, "TOKEN");
         let m = c.send_photo(42, tmp.path(), Some("cap"), None, None).unwrap();
         assert_eq!(m.message_id, 7);
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn get_file_parses_response() {
+        let (base, join) = spawn_mock(|req| {
+            let body = r#"{"ok":true,"result":{"file_id":"X","file_unique_id":"Y","file_path":"documents/file.pdf","file_size":1234}}"#;
+            req.respond(tiny_http::Response::from_string(body)
+                .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap()))
+                .unwrap();
+        });
+        let c = Client::new(base, "TOKEN");
+        let f = c.get_file("X").unwrap();
+        assert_eq!(f.file_path.as_deref(), Some("documents/file.pdf"));
         join.join().unwrap();
     }
 }
