@@ -139,7 +139,9 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state
             // sit silent for a few seconds while whisper runs; that's
             // fine — beats injecting `(voice 0:12) [file: ...]` then a
             // separate prompt with the transcript later.
-            if let Some(whisper_url) = cfg.whisper_url.as_deref() {
+            // Use the accessor so the new [transcription] table wins
+            // over the legacy top-level `whisper_url` field.
+            if let Some(whisper_url) = cfg.whisper_url() {
                 if msg.voice.is_some() || msg.audio.is_some() {
                     match crate::transcribe::transcribe(&p, whisper_url, "ffmpeg") {
                         Ok(text) => {
