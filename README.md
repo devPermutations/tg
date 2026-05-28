@@ -7,7 +7,11 @@
 Telegram and types each incoming message directly into a tmux pane via
 `send-keys`. The outbound CLI sends text, photos, and documents to any
 chat in your allowlist. A single static Rust binary plus a systemd user
-unit — no MCP server, no Node/Bun runtime, no plugin manager.
+unit.
+
+Whatever's running in that pane sees the message as if you'd typed it
+yourself — a shell, an agent, a TUI editor, a REPL. There's no
+app-specific integration: if it reads stdin, it reads Telegram messages.
 
 ```text
 [on your phone, you DM the bot]
@@ -17,9 +21,6 @@ unit — no MCP server, no Node/Bun runtime, no plugin manager.
    $ [telegram @alice (chat_id=1234567890)] deploy the staging service?
    $
 ```
-
-Whatever you have running in that pane — a shell, an agent, a TUI — sees
-the message as if you'd typed it.
 
 ## Table of contents
 
@@ -40,17 +41,19 @@ the message as if you'd typed it.
 
 ## Why this exists
 
-I wanted a Telegram bridge into [Claude
-Code](https://docs.claude.com/en/docs/claude-code) — type a message on
-my phone, have it land in the agent's prompt — without running a
-Node/Bun MCP server, and without depending on undocumented host
-notification machinery that may or may not deliver. The send-keys
-approach is dumb-simple and works on any TUI: Claude Code, Aider, a
-plain shell, Vim, anything that reads `stdin`.
+Phones are great for noticing things, terrible for typing into a
+terminal. I wanted to glance at my phone, tap out a message, and have
+it land in whatever I'd left running in a tmux pane — a shell, an
+agent, a REPL, an editor — without that program needing to know
+anything about Telegram.
 
-If you want the same shape for some other terminal app, this CLI works
-out of the box. Point `tmux_target` at the pane you want messages
-delivered to.
+The `tmux send-keys` mechanism is the smallest possible integration
+surface: from the target app's perspective, the message just appears
+as keyboard input. That keeps `tg` simple and makes it work
+universally.
+
+Point `tmux_target` at the pane you want messages delivered to and
+that's it.
 
 ## Install
 
@@ -269,12 +272,12 @@ expired (1-hour TTL — DM again to get a fresh one), or your chat_id
 got allowlisted but the pane no longer matches `tmux_target`. Verify
 with `tg list` and `tmux has-session -t <target>`.
 
-**Both my bun MCP plugin and `tg listen` are running.**
-Telegram's Bot API rejects concurrent long-polls — only one client can
-hold the connection. If you migrated from the bun plugin, disable it
-in `~/.claude/settings.json` (set
-`"telegram@claude-plugins-official": false` under `enabledPlugins`)
-**before** starting `tg listen`.
+**Two clients are polling the same bot.**
+Telegram's Bot API rejects concurrent `getUpdates` long-polls — only
+one client can hold the connection. If you have another tool (a
+webhook, a previous bot framework, another `tg listen` instance) using
+the same bot token, the second one will fail with HTTP 409. Either
+stop the other client or use a different bot.
 
 **Send fails with `Bad Request: chat not found`.**
 The chat_id you passed isn't in the bot's known chats. Telegram only
@@ -297,17 +300,6 @@ Send-keys works on every TUI without modification. The agent / shell /
 editor in the pane doesn't need to know `tg` exists — it just sees
 "the user typed something." That's a vastly smaller integration
 surface than wiring a tool-call protocol into every possible target.
-
-**Why not just be an MCP server?**
-MCP servers run only while their host (e.g. Claude Code) is alive,
-and the notification channel for inbound messages turned out to be
-unreliable on Claude Code as of 2026-05. Send-keys sidesteps the whole
-host-integration problem.
-
-**Can I use this without Claude Code / agents?**
-Yes. The binary doesn't know about Claude Code. Point `tmux_target` at
-any tmux pane (a shell, a REPL, Vim, anything) and inbound messages
-get typed there.
 
 **Does this work with group chats?**
 Not in v0.1 — DM-only by design. Group support is on the roadmap.
@@ -351,7 +343,7 @@ Pull requests welcome. Before opening one:
   what's in scope.
 - Run `cargo test` and `cargo build --release` — both must pass.
 - Stay within the v0.1 architectural boundaries (single binary, no
-  tokio, no MCP). New deps need a justification.
+  tokio). New deps need a justification.
 - Add a test for any new behavior — unit if pure, integration if it
   touches the binary as a process. Look at `tests/outbound.rs` for the
   pattern.
@@ -363,15 +355,14 @@ TDD progression matching `docs/plan.md`.
 
 ## Acknowledgments
 
-The interface (per-chat allowlist, pairing flow, `notifications/claude/channel`
-shape) was directly inspired by the official Claude Code Telegram MCP
-plugin in [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official).
-`tg` re-implements the same concepts as a self-contained Rust CLI
-because I wanted a delivery mechanism that didn't depend on a
-host-side notification channel.
+The access model — per-chat allowlist with a code-based pairing flow —
+follows the shape used by the Telegram channel plugin in
+[`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official),
+which is where I first saw it applied to a single-user bot.
 
-The send-keys-into-tmux trick has been used by many people before me
-for many purposes. I learned it from the Anthropic plugin's source.
+The `tmux send-keys`-as-input-channel pattern long predates this
+project and has been used by many people for many purposes; this is
+just one more application.
 
 ## License
 
