@@ -5,6 +5,7 @@ mod config;
 mod pending;
 mod tmux;
 mod api;
+mod init;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
@@ -24,7 +25,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Write ~/.tg/config.toml interactively.
-    Init,
+    Init {
+        #[arg(long)] token: Option<String>,
+        #[arg(long)] tmux_target: Option<String>,
+        #[arg(long)] force: bool,
+    },
     /// Symlink into ~/.ir/tools/ and install + enable the systemd unit.
     Install,
     /// Inbound daemon: poll Telegram, gate, deliver via tmux send-keys.
@@ -52,7 +57,8 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Init => todo!("Task 9: init"),
+        Command::Init { token, tmux_target, force } =>
+            init::run(init::InitOpts { token, tmux_target, force }),
         Command::Install => todo!("Task 14: install"),
         Command::Listen => todo!("Task 13: listen"),
         Command::Send => todo!("Task 12: send"),
