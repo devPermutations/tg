@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -23,11 +23,43 @@ pub struct PendingEntry {
     pub last_reminder_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+/// In-memory store keyed by i64 chat_id.
+///
+/// Wire format (JSON) uses string keys because JSON requires it.  The
+/// custom Serialize/Deserialize impls convert between i64 and String so
+/// that the rest of the codebase never has to call `.to_string()` on a
+/// chat_id, and `find_by_code` never does an unchecked `.parse::<i64>()`.
+///
+/// Existing pending.json files (v0.5, string-keyed) load transparently —
+/// `"42"` in the file deserializes as the i64 `42`.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct PendingStore {
-    /// chat_id -> entry (chat_id as string because JSON map keys must be strings)
-    #[serde(flatten)]
-    pub entries: HashMap<String, PendingEntry>,
+    pub entries: HashMap<i64, PendingEntry>,
+}
+
+impl Serialize for PendingStore {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        // Serialize as a flat JSON object with string keys.
+        let string_keyed: HashMap<String, &PendingEntry> =
+            self.entries.iter().map(|(k, v)| (k.to_string(), v)).collect();
+        string_keyed.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PendingStore {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        // Deserialize a flat JSON object with string keys, then parse
+        // each key as i64.  Non-integer keys are rejected with an error.
+        let string_keyed = HashMap::<String, PendingEntry>::deserialize(deserializer)?;
+        let mut entries = HashMap::with_capacity(string_keyed.len());
+        for (k, v) in string_keyed {
+            let id: i64 = k.parse().map_err(|_| {
+                serde::de::Error::custom(format!("pending.json key is not a valid i64: {k:?}"))
+            })?;
+            entries.insert(id, v);
+        }
+        Ok(PendingStore { entries })
+    }
 }
 
 impl PendingStore {
@@ -63,7 +95,7 @@ impl PendingStore {
     }
 
     pub fn get(&self, chat_id: i64) -> Option<&PendingEntry> {
-        self.entries.get(&chat_id.to_string())
+        self.entries.get(&chat_id)
     }
 
     pub fn insert_new(&mut self, chat_id: i64, username: Option<String>, now: DateTime<Utc>) -> &PendingEntry {
@@ -74,13 +106,13 @@ impl PendingStore {
             expires_at: now + Duration::hours(EXPIRY_HOURS),
             last_reminder_at: now,
         };
-        self.entries.insert(chat_id.to_string(), entry);
-        self.entries.get(&chat_id.to_string()).unwrap()
+        self.entries.insert(chat_id, entry);
+        self.entries.get(&chat_id).unwrap()
     }
 
     /// Remove the entry for `chat_id`; returns it if present.
     pub fn remove(&mut self, chat_id: i64) -> Option<PendingEntry> {
-        self.entries.remove(&chat_id.to_string())
+        self.entries.remove(&chat_id)
     }
 
     /// Find by code (case-insensitive). Returns (chat_id, entry).
@@ -88,7 +120,7 @@ impl PendingStore {
         let needle = code.to_uppercase();
         self.entries.iter().find_map(|(k, v)| {
             if v.code == needle {
-                k.parse::<i64>().ok().map(|id| (id, v))
+                Some((*k, v))
             } else { None }
         })
     }
@@ -162,5 +194,25 @@ mod tests {
         s.save(&p).unwrap();
         let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn legacy_string_keyed_json_still_parses() {
+        // pending.json files written by v0.5 had string-keyed JSON
+        // objects (because JSON requires string keys). The runtime type
+        // is now HashMap<i64, V> but the wire format hasn't changed.
+        // This test pins that backward-compat property.
+        let body = r#"{
+  "8583339367": {
+    "code": "K7M3P2",
+    "username": "alice",
+    "first_seen_at": "2026-05-28T00:42:11Z",
+    "expires_at": "2026-05-28T01:42:11Z",
+    "last_reminder_at": "2026-05-28T00:42:11Z"
+  }
+}"#;
+        let store: PendingStore = serde_json::from_str(body).unwrap();
+        assert_eq!(store.entries.len(), 1);
+        assert!(store.get(8583339367).is_some());
     }
 }

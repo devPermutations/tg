@@ -168,9 +168,11 @@ mod tests {
     fn seed(home: &std::path::Path) {
         std::env::set_var("TG_HOME", home);
         let cfg = Config {
+            schema_version: 1,
             bot_token: "T".into(),
             tmux_target: "x".into(),
             owner_chat_id: None,
+            transcription: None,
             whisper_url: None,
             allow: vec![],
         };

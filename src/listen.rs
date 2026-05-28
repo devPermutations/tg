@@ -211,7 +211,7 @@ fn handle_gated(client: &Client, chat_id: i64, username: Option<&str>) -> Result
             // Still pending and not expired — throttled reminder.
             if now.signed_duration_since(entry.last_reminder_at) >= throttle {
                 let code = entry.code.clone();
-                let entry_mut = store.entries.get_mut(&chat_id.to_string()).unwrap();
+                let entry_mut = store.entries.get_mut(&chat_id).unwrap();
                 entry_mut.last_reminder_at = now;
                 store.save(&pending_path)?;
                 needs_send_message = Some(format!(
