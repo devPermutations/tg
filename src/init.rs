@@ -66,6 +66,7 @@ mod tests {
 
     #[test]
     fn writes_config_with_flags() {
+        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
         std::env::set_var("TG_HOME", dir.path());
         let opts = InitOpts {
@@ -85,6 +86,7 @@ mod tests {
 
     #[test]
     fn refuses_overwrite_without_force() {
+        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
         std::env::set_var("TG_HOME", dir.path());
         let first = run(InitOpts {

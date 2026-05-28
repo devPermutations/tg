@@ -38,9 +38,11 @@ pub fn check_mode_strict(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::test_lock;
 
     #[test]
     fn tg_home_uses_override() {
+        let _g = test_lock::acquire();
         std::env::set_var("TG_HOME", "/tmp/tg-test-xyz");
         let got = tg_home();
         std::env::remove_var("TG_HOME");
@@ -49,9 +51,25 @@ mod tests {
 
     #[test]
     fn config_path_is_under_home() {
+        let _g = test_lock::acquire();
         std::env::set_var("TG_HOME", "/tmp/x");
         let got = config_path();
         std::env::remove_var("TG_HOME");
         assert_eq!(got, PathBuf::from("/tmp/x/config.toml"));
+    }
+}
+
+#[cfg(test)]
+pub mod test_lock {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Hold this guard for the duration of any test that sets TG_HOME.
+    /// All such tests across all modules acquire the same lock, so they
+    /// execute serially with respect to TG_HOME mutation even when cargo
+    /// runs them in parallel threads.
+    pub fn acquire() -> MutexGuard<'static, ()> {
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
     }
 }
