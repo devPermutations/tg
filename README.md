@@ -5,9 +5,9 @@
 
 **Bridge a Telegram bot to your terminal.** The inbound daemon long-polls
 Telegram and types each incoming message directly into a tmux pane via
-`send-keys`. The outbound CLI sends text, photos, and documents to any
-chat in your allowlist. A single static Rust binary plus a systemd user
-unit.
+`send-keys`. The outbound CLI sends text, photos, documents, voice, and
+audio to any chat in your allowlist. A single static Rust binary plus a
+systemd user unit.
 
 Whatever's running in that pane sees the message as if you'd typed it
 yourself — a shell, an agent, a TUI editor, a REPL. There's no
@@ -22,14 +22,43 @@ app-specific integration: if it reads stdin, it reads Telegram messages.
    $
 ```
 
+## Features
+
+- **Inbound daemon** (`tg listen`) — long-polls Telegram, gates by an
+  explicit per-chat allowlist, downloads attachments, types the
+  message into a tmux pane.
+- **Outbound CLI** (`tg send`) — text + photo + document + voice +
+  audio, with optional MarkdownV2 and reply threading.
+- **Allowlist with two trust tiers** — one designated *owner* whose
+  DMs reach the pane, plus *outbound-only contacts* you can send to
+  but whose inbound is silently dropped. Unknown senders are dropped
+  with no Telegram reply at all (no leak of bot existence).
+- **Pairing flow** — for the legacy unowned mode, unknown senders get
+  a one-time code on Telegram and you confirm with `tg pair XXXXXX`
+  locally; in owner mode the pairing flow is disabled and you grow
+  the contact list yourself with `tg allow`.
+- **Voice / audio transcription** (optional) — point at a
+  [whisper.cpp](https://github.com/ggerganov/whisper.cpp/tree/master/examples/server)
+  HTTP server and inbound `.oga`/`.mp3`/etc. get transcribed before
+  the prompt line is typed.
+- **Attachment downloads** — photos, documents, voice, audio, and
+  stickers go to `~/.tg/inbox/`; the path is appended to the typed
+  line so an agent in the pane can `Read` the file directly.
+- **systemd user-service supervisor** — `tg install` ships the unit
+  template; logs go to journald.
+- **`ir` tool integration** — `tg install` symlinks the binary into
+  `~/.ir/tools/` so [ir](https://github.com/) (and any other harness
+  using that tool dir) can drive `tg send` directly.
+
 ## Table of contents
 
 - [Why this exists](#why-this-exists)
 - [Install](#install)
 - [Usage](#usage)
 - [Subcommands](#subcommands)
-- [Configuration](#configuration)
+- [Access control & validation](#access-control--validation)
 - [Security model](#security-model)
+- [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -206,6 +235,87 @@ and no `[transcript: ...]`.
 
 Every subcommand supports `--help`.
 
+## Access control & validation
+
+There is no Telegram chat that can reach your tmux pane until you say
+so. `tg` enforces this with two layers: an **allowlist** (who the bot
+talks to at all) and an **owner designation** (which one of those
+people can actually inject keystrokes into your pane).
+
+### Trust tiers
+
+| Sender | Inbound (DMs → tmux pane) | Outbound (`tg send` → recipient) |
+|---|---|---|
+| **Owner** (`owner_chat_id`) | ✅ typed into the pane | ✅ |
+| **Allowlisted contact** (in `[[allow]]`, not owner) | ❌ silent drop | ✅ |
+| **Unknown** (not in allowlist) | ❌ silent drop, **no Telegram reply** | ✅ — outbound is not gated |
+
+Outbound is intentionally ungated: `tg send --chat-id N` works for any
+chat_id the bot has ever seen, even one not in your config. That's the
+point of an outbound CLI — you decide who to talk to.
+
+Inbound is the dangerous direction (someone else's text becoming your
+typed input), and *that* is what the allowlist and owner gate protect.
+
+### Adding a contact
+
+Two paths to extend the allowlist:
+
+**1. Direct admin add (recommended when an owner is set).** You know
+the chat_id (got it from a debug bot like `@RawDataBot`, or out of
+band) and you add them yourself:
+
+```bash
+tg allow --chat-id 9876543210 --label tim
+```
+
+They're now an outbound-only contact — you can `tg send` them, but if
+they DM the bot their messages are silently dropped.
+
+**2. Pairing flow (legacy unowned mode only).** With no owner set,
+unknown senders DM'ing the bot get a one-time code on Telegram. You
+confirm it locally:
+
+```bash
+$ tg pending
+9876543210  K7M3P2  tim  58m12s remaining
+$ tg pair K7M3P2
+paired chat_id 9876543210
+```
+
+The code is 6 chars from `[A-Z0-9]` (≈ 2.2B combinations), expires
+after 1 hour, and reminder DMs are throttled to once per 30 seconds
+per sender. The `tg pair` confirmation runs **locally** — an attacker
+who reads the reminder over Telegram can't pair themselves without
+shell access to your host. When `owner_chat_id` is set, the pairing
+flow is disabled entirely (unknown senders get the silent drop
+instead).
+
+### Promoting a contact to owner
+
+The owner is the single chat whose DMs are typed into the pane:
+
+```bash
+tg set-owner --chat-id 1234567890   # make this chat the owner
+tg set-owner --unset                 # revert to "everyone in allowlist delivers"
+```
+
+You can only have one owner at a time. To swap, just run `set-owner`
+again — the old owner becomes a regular outbound-only contact.
+
+### Listing and inspection
+
+```bash
+$ tg list
+1234567890  alice  (owner)
+9876543210  bob
+
+$ tg pending
+(no pending pairings)
+```
+
+The `(owner)` tag is the gate. Anything without it is outbound-only.
+
 ## Configuration
 
 `~/.tg/config.toml` (mode `0600`):
@@ -248,52 +358,130 @@ listen` with `Restart=always, RestartSec=5`. Logs go to journald.
 
 ## Security model
 
-- **Bot token confidentiality.** The token lives only in
-  `config.toml`. Atomic-write at `0600` via `OpenOptions::mode()` + a
-  sibling temp file + rename — the file never transiently exists at a
-  wider mode, even on overwrite. The daemon **refuses to start** if
-  `config.toml` or `pending.json` have any group/other bits set.
-- **No silent leakage of bot existence.** With `owner_chat_id` set
-  (the recommended deployment), unknown senders get **no reply at
-  all** — their DMs are silently dropped, so the bot's existence is
-  not advertised to anyone you haven't explicitly allowlisted. (In the
-  legacy unowned mode, unknown senders get a throttled pairing
-  reminder instead.)
-- **Owner-only inbound delivery.** With `owner_chat_id` set, only the
-  owner's DMs are typed into the tmux pane. Other allowlisted contacts
-  can be `tg send`-ed to but their inbound DMs are silently dropped —
-  the agent in the pane never sees them. This stops contact-list
-  members from injecting prompts into whatever's running in the pane.
-- **Pairing disabled when owner is set.** With an owner configured,
-  the bot will not auto-create pending pairings for unknown senders.
-  The owner is the only party authorized to grow the contact list,
-  via `tg allow --chat-id N`.
-- **Pairing code strength.** 6 alphanumeric uppercase characters
-  (`[A-Z0-9]`), 36⁶ ≈ 2.2B possibilities, expires in 1 hour, rate-limited
-  by the once-per-30s reminder cadence. The `tg pair` confirmation runs
-  **locally on your machine** — an attacker reading the code over
-  Telegram cannot pair themselves.
-- **Filename sanitization on inbound attachments.** Original
-  Telegram-supplied filenames are reduced to `[A-Za-z0-9._-]` before
-  being joined to the inbox path. Path-separator injection is not
-  possible.
-- **Text sanitization before tmux delivery.** C0 control characters are
-  stripped and runs of newlines are collapsed to a single space, so a
-  message body can't escape its prompt line or inject escape sequences.
-- **No outbound side-channel.** The daemon never reads or writes outside
-  `~/.tg/`. The install command writes to `~/.config/systemd/user/` and
-  optionally `~/.ir/tools/`, both with clear console output.
+`tg` injects text from a remote source into a terminal. That is a
+sensitive operation, and the security model is built around the idea
+that **only the owner is trusted to drive the terminal**. Everyone
+else is, at most, an outbound-only contact. This section describes
+the layered defenses and the threat boundaries.
 
-What's **not** in v0.1's threat model:
+### Threat model
 
-- An attacker with shell access on the same user account can read
-  `config.toml`. Use proper file-system permissions and don't ship the
-  config in a Docker layer.
-- An attacker who controls the Telegram account that's already
-  allowlisted can inject text into your tmux pane. The sanitization
-  prevents escape sequences and multi-line injection, but the text
-  itself is whatever the attacker types. If your tmux pane is running
-  an agent that can take destructive actions, vet your allowlist.
+In scope (we defend against these):
+
+- A random Telegram user discovering and DM'ing the bot, attempting
+  to inject keystrokes into your pane or extract information about
+  who's allowlisted.
+- An outbound-only contact (someone you `tg send` to) attempting to
+  reverse the channel by DM'ing the bot.
+- A malicious message body containing escape sequences, newline
+  injection, or control characters intended to break out of the
+  prompt line.
+- A malicious attachment filename containing path separators or
+  parent-directory references intended to write outside `~/.tg/inbox/`.
+- A misconfigured filesystem permission widening the bot token to
+  group/world readers.
+- A crash during a config or state write leaving the file partially
+  written or in an inconsistent state.
+
+Out of scope (you handle these yourself):
+
+- An attacker who already has shell access on the same user account
+  reading `config.toml`. Use proper Unix permissions; don't bake the
+  config into a container layer; don't share the host account.
+- A compromised owner Telegram account. If the attacker controls the
+  owner's chat, they can type anything into your pane. Vet who has
+  access to your phone, use Telegram's 2FA, etc.
+- A backdoored whisper.cpp build returning poisoned transcripts. If
+  you're worried about your transcription backend, audit it or run a
+  vetted build.
+- Network-layer attacks on the Telegram Bot API. We rely on TLS
+  to api.telegram.org; that's standard and outside this project's
+  scope.
+
+### Defenses
+
+**1. Allowlist & validation (the primary gate).**
+Inbound is gated by an explicit per-chat allowlist. Unknown senders
+get no Telegram reply at all when an owner is configured — the bot
+does not advertise its existence. See
+[Access control & validation](#access-control--validation) above for
+the full mechanism. Key properties:
+
+- The allowlist is human-readable TOML; you can audit it with `cat`
+  or `tg list`.
+- Adding a contact requires either a `tg allow` from the host shell
+  or, in legacy unowned mode, a `tg pair <code>` confirmation from
+  the host shell. **No path lets a remote sender add themselves.**
+- Pairing codes are 6 chars from `[A-Z0-9]` (≈ 2.2B combinations),
+  expire in 1 hour, with reminder DMs rate-limited to once per 30
+  seconds per chat. Brute force is infeasible.
+- Owner mode (`owner_chat_id` set) disables the pairing flow
+  entirely — only direct admin adds work.
+
+**2. Owner gating (the second gate).**
+Allowlisting a chat means you can `tg send` to them. It does *not*
+mean their DMs reach your pane. Only the **owner**'s DMs are typed
+into tmux. Other allowlisted contacts' DMs are silently dropped at
+the daemon. This is what makes it safe to have contacts in the
+allowlist without exposing your terminal to all of them.
+
+**3. Token confidentiality.**
+The bot token lives only in `~/.tg/config.toml` at mode `0600`. The
+save path is an atomic write — open at `0600` via
+`OpenOptions::mode()`, write, `flush + fsync`, rename over the
+destination. The file never transiently exists at a wider mode, even
+on overwrite. The daemon **refuses to start** if `config.toml` or
+`pending.json` are wider than `0600`.
+
+**4. Inbound-text sanitization.**
+Before any message body is handed to `tmux send-keys`, runs of
+newlines are collapsed to a single space and all C0 control
+characters are stripped. The text is sent literally via
+`send-keys -l` (no key-name interpretation), and the Enter key is a
+separate `send-keys Enter` invocation. A message body cannot escape
+its prompt line, cannot inject ANSI escape sequences, and cannot
+inject extra key events.
+
+**5. Attachment filename sanitization.**
+Telegram-supplied filenames are reduced to `[A-Za-z0-9._-]` before
+being joined to the inbox path. The output filename always has a
+`{unix_ts}-` prefix, so even a maximally weird stem cannot produce
+a path beginning with `/`, `..`, or similar — path-separator
+injection is not possible. The 5 MB cap on audio for transcription
+limits resource consumption.
+
+**6. Crash safety.**
+All file writes (`config.toml`, `pending.json`, the offset state
+file) go through a temp-file + rename pattern with `flush + sync_all`
+before the rename. A crash during a write leaves the previous file
+intact; you never end up with a half-written allowlist.
+
+**7. No outbound side-channels.**
+The listen daemon never reads or writes outside `~/.tg/`. `tg
+install` writes to `~/.config/systemd/user/` and (if `~/.ir/tools/`
+exists) symlinks into it, with clear console output identifying each
+mutation. The daemon makes outbound HTTP only to the Telegram Bot
+API and the configured `whisper_url`.
+
+### What we don't claim
+
+- This isn't a replacement for a hardened bastion or a real audit
+  trail. A motivated attacker who compromises your account can drive
+  your terminal — the design assumes the owner's Telegram account is
+  not hostile.
+- We don't sandbox the typed-into pane. Whatever the agent in that
+  pane can do, the owner of the Telegram account can also cause it
+  to do. Match the pane's permissions to the owner's trust level.
+- We don't perform syntactic validation on the content of a typed
+  line beyond control-char stripping. If you're worried about an
+  attacker sending "rm -rf /" as a message, don't put a root shell
+  in the pane; put an agent in there that can ask for confirmation.
+
+### Reporting a security issue
+
+Open a GitHub issue marked `[security]`, or email the maintainer
+listed in the commit history. Please don't post unredacted bot
+tokens or chat_ids in public issues.
 
 ## Architecture
 
