@@ -479,9 +479,37 @@ API and the configured `whisper_url`.
 
 ### Reporting a security issue
 
-Open a GitHub issue marked `[security]`, or email the maintainer
-listed in the commit history. Please don't post unredacted bot
-tokens or chat_ids in public issues.
+See [`SECURITY.md`](SECURITY.md) for the full disclosure policy,
+supported-versions table, response-time expectations, and the list
+of past advisories.
+
+Quick summary: use [GitHub's private security
+advisories](https://github.com/devPermutations/tg/security/advisories/new)
+to report — not a public issue. Don't include real bot tokens or
+chat_ids in any report; use placeholders.
+
+### Audit process
+
+The codebase is small (≈ 1500 LOC of Rust, no `unsafe`) and the
+threat model + defenses above are intended to be fully auditable
+in one sitting. The recommended pre-release checklist:
+
+1. Run `/security-audit` (Claude Code's `security-guidance` plugin)
+   on the working tree before tagging a release. The audit covers
+   token leakage, path traversal, command injection, gate-logic
+   bypasses, TLS, deserialization, multipart boundary collisions,
+   and crash safety.
+2. Triage findings against the threat model in this section.
+3. Fix HIGH and MEDIUM findings before release; LOW findings can
+   land in the next minor.
+
+This is how the v0.5.1 token-leak vulnerability was found (audit
+finding → fixed in v0.5.2). The full audit-finding report for that
+issue is preserved in the v0.5.2 release notes and the corresponding
+[GitHub Security Advisory](https://github.com/devPermutations/tg/security/advisories).
+
+If you're evaluating `tg` for production-like use, run your own
+audit too — the small code surface makes that practical.
 
 ## Architecture
 
