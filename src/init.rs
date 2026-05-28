@@ -85,62 +85,47 @@ mod tests {
 
     #[test]
     fn writes_config_with_owner() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
         let opts = InitOpts {
             token: Some("TOKEN".into()),
             tmux_target: Some("root:1".into()),
             owner_chat_id: Some(42),
             force: false,
         };
-        let run_result = run(opts);
-        let cfg_path = paths::config_path();
-        std::env::remove_var("TG_HOME");
-
-        run_result.unwrap();
-        let cfg = Config::load(&cfg_path).unwrap();
+        run(opts).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.owner_chat_id, Some(42));
     }
 
     #[test]
     fn writes_config_with_flags() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
         let opts = InitOpts {
             token: Some("TOKEN".into()),
             tmux_target: Some("root:1".into()),
             owner_chat_id: None,
             force: false,
         };
-        let run_result = run(opts);
-        let cfg_path = paths::config_path();
-        std::env::remove_var("TG_HOME");
-
-        run_result.unwrap();
-        let cfg = Config::load(&cfg_path).unwrap();
+        run(opts).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.bot_token, "TOKEN");
         assert_eq!(cfg.tmux_target, "root:1");
     }
 
     #[test]
     fn writes_owner_as_allowlist_entry() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
         let opts = InitOpts {
             token: Some("T".into()),
             tmux_target: Some("x".into()),
             owner_chat_id: Some(123),
             force: false,
         };
-        let run_result = run(opts);
-        let cfg_path = paths::config_path();
-        std::env::remove_var("TG_HOME");
-
-        run_result.unwrap();
-        let cfg = Config::load(&cfg_path).unwrap();
+        run(opts).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.owner_chat_id, Some(123));
         assert_eq!(cfg.allow.len(), 1, "owner should be appended to allowlist");
         assert_eq!(cfg.allow[0].chat_id, 123);
@@ -150,9 +135,8 @@ mod tests {
 
     #[test]
     fn refuses_overwrite_without_force() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
         let first = run(InitOpts {
             token: Some("A".into()), tmux_target: Some("x".into()),
             owner_chat_id: None, force: false,
@@ -161,8 +145,6 @@ mod tests {
             token: Some("B".into()), tmux_target: Some("y".into()),
             owner_chat_id: None, force: false,
         });
-        std::env::remove_var("TG_HOME");
-
         first.unwrap();
         let err = second.unwrap_err().to_string();
         assert!(err.contains("already exists"));

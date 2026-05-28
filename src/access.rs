@@ -192,8 +192,9 @@ mod tests {
     use crate::pending::PendingStore;
     use chrono::Utc;
 
-    fn seed(home: &std::path::Path) {
-        std::env::set_var("TG_HOME", home);
+    fn seed() {
+        // Assumes the caller already set the TEST_HOME override via
+        // crate::paths::test_helpers::set_test_tg_home before calling.
         let cfg = Config {
             schema_version: 1,
             bot_token: "T".into(),
@@ -208,56 +209,42 @@ mod tests {
 
     #[test]
     fn allow_then_list() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let result = allow(42, Some("alice".into()));
-        let cfg_result = Config::load(&paths::config_path());
-        std::env::remove_var("TG_HOME");
-
-        result.unwrap();
-        let cfg = cfg_result.unwrap();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        allow(42, Some("alice".into())).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert!(cfg.is_allowed(42));
     }
 
     #[test]
     fn allow_refuses_duplicate() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let first = allow(42, None);
-        let second = allow(42, None);
-        std::env::remove_var("TG_HOME");
-
-        first.unwrap();
-        let err = second.unwrap_err().to_string();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        allow(42, None).unwrap();
+        let err = allow(42, None).unwrap_err().to_string();
         assert!(err.contains("already"));
     }
 
     #[test]
     fn deny_removes_and_refuses_missing() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let add = allow(7, None);
-        let remove1 = deny(7);
-        let cfg_result = Config::load(&paths::config_path());
-        let remove2 = deny(7);
-        std::env::remove_var("TG_HOME");
-
-        add.unwrap();
-        remove1.unwrap();
-        let cfg = cfg_result.unwrap();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        allow(7, None).unwrap();
+        deny(7).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert!(!cfg.is_allowed(7));
-        let err = remove2.unwrap_err().to_string();
+        let err = deny(7).unwrap_err().to_string();
         assert!(err.contains("not in allowlist"));
     }
 
     #[test]
     fn pair_moves_pending_to_allow() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
         let mut store = PendingStore::default();
         let entry = store.insert_new(42, Some("alice".into()), Utc::now()).clone();
         store.save(&paths::pending_path()).unwrap();
@@ -265,88 +252,63 @@ mod tests {
         // No real API needed: client.send_message will fail to connect
         // but pair() ignores reply failures (logs only). Point at an
         // unreachable URL.
-        let pair_result = pair(&entry.code, "http://127.0.0.1:1");
-        let cfg_result = Config::load(&paths::config_path());
-        let store2_result = PendingStore::load(&paths::pending_path());
-        std::env::remove_var("TG_HOME");
-
-        pair_result.unwrap();
-        let cfg = cfg_result.unwrap();
+        pair(&entry.code, "http://127.0.0.1:1").unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert!(cfg.is_allowed(42));
-        let store2 = store2_result.unwrap();
+        let store2 = PendingStore::load(&paths::pending_path()).unwrap();
         assert!(store2.get(42).is_none());
     }
 
     #[test]
     fn pair_unknown_code_errors() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let result = pair("ZZZZZZ", "http://127.0.0.1:1");
-        std::env::remove_var("TG_HOME");
-
-        let err = result.unwrap_err().to_string();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        let err = pair("ZZZZZZ", "http://127.0.0.1:1").unwrap_err().to_string();
         assert!(err.contains("unknown"));
     }
 
     #[test]
     fn set_owner_persists() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let set_result = set_owner(Some(99), false);
-        let cfg_after_set = Config::load(&paths::config_path());
-        let unset_result = set_owner(None, true);
-        let cfg_after_unset = Config::load(&paths::config_path());
-        std::env::remove_var("TG_HOME");
-
-        set_result.unwrap();
-        assert_eq!(cfg_after_set.unwrap().owner_chat_id, Some(99));
-        unset_result.unwrap();
-        assert_eq!(cfg_after_unset.unwrap().owner_chat_id, None);
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        set_owner(Some(99), false).unwrap();
+        assert_eq!(Config::load(&paths::config_path()).unwrap().owner_chat_id, Some(99));
+        set_owner(None, true).unwrap();
+        assert_eq!(Config::load(&paths::config_path()).unwrap().owner_chat_id, None);
     }
 
     #[test]
     fn set_owner_rejects_both_and_neither() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let neither = set_owner(None, false);
-        std::env::remove_var("TG_HOME");
-
-        let err = neither.unwrap_err().to_string();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        let err = set_owner(None, false).unwrap_err().to_string();
         assert!(err.contains("exactly one"));
     }
 
     #[test]
     fn reject_removes_pending() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
         let mut store = PendingStore::default();
         store.insert_new(7, None, Utc::now());
         store.save(&paths::pending_path()).unwrap();
 
-        let result = reject(7);
-        let store2_result = PendingStore::load(&paths::pending_path());
-        std::env::remove_var("TG_HOME");
-
-        result.unwrap();
-        let store2 = store2_result.unwrap();
+        reject(7).unwrap();
+        let store2 = PendingStore::load(&paths::pending_path()).unwrap();
         assert!(store2.get(7).is_none());
     }
 
     #[test]
     fn set_owner_appends_to_allowlist_when_missing() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let result = set_owner(Some(99), false);
-        let cfg_result = Config::load(&paths::config_path());
-        std::env::remove_var("TG_HOME");
-
-        result.unwrap();
-        let cfg = cfg_result.unwrap();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        set_owner(Some(99), false).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.owner_chat_id, Some(99));
         assert_eq!(cfg.allow.len(), 1, "owner should be auto-added to allowlist");
         assert_eq!(cfg.allow[0].chat_id, 99);
@@ -355,35 +317,25 @@ mod tests {
 
     #[test]
     fn set_owner_keeps_existing_entry_label() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
         // Pre-add owner with a meaningful label.
-        let pre = allow(99, Some("virgil".into()));
-        let result = set_owner(Some(99), false);
-        let cfg_result = Config::load(&paths::config_path());
-        std::env::remove_var("TG_HOME");
-
-        pre.unwrap();
-        result.unwrap();
-        let cfg = cfg_result.unwrap();
+        allow(99, Some("virgil".into())).unwrap();
+        set_owner(Some(99), false).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.allow.len(), 1, "should NOT duplicate");
         assert_eq!(cfg.allow[0].label.as_deref(), Some("virgil"), "should preserve existing label");
     }
 
     #[test]
     fn unset_owner_keeps_allow_entry() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        seed(dir.path());
-        let setup1 = set_owner(Some(99), false);
-        let setup2 = set_owner(None, true);
-        let cfg_result = Config::load(&paths::config_path());
-        std::env::remove_var("TG_HOME");
-
-        setup1.unwrap();
-        setup2.unwrap();
-        let cfg = cfg_result.unwrap();
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        seed();
+        set_owner(Some(99), false).unwrap();
+        set_owner(None, true).unwrap();
+        let cfg = Config::load(&paths::config_path()).unwrap();
         assert_eq!(cfg.owner_chat_id, None);
         assert_eq!(cfg.allow.len(), 1, "allow entry should NOT be removed on unset-owner");
     }

@@ -349,24 +349,17 @@ mod tests {
 
     #[test]
     fn read_offset_returns_zero_when_missing() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
-        let result = read_offset();
-        std::env::remove_var("TG_HOME");
-        assert_eq!(result.unwrap(), 0);
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        assert_eq!(read_offset().unwrap(), 0);
     }
 
     #[test]
     fn write_then_read_offset_roundtrips() {
-        let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
-        std::env::set_var("TG_HOME", dir.path());
-        let write_result = write_offset(12345);
-        let read_result = read_offset();
-        std::env::remove_var("TG_HOME");
-        write_result.unwrap();
-        assert_eq!(read_result.unwrap(), 12345);
+        let _home = crate::paths::test_helpers::set_test_tg_home(dir.path());
+        write_offset(12345).unwrap();
+        assert_eq!(read_offset().unwrap(), 12345);
     }
 
     use crate::api::{Audio, Chat, Sticker, Voice};

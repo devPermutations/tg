@@ -1,10 +1,28 @@
-//! Resolves ~/.tg/ paths, with TG_HOME override for tests.
+//! Resolves ~/.tg/ paths.
+//!
+//! Resolution order: thread-local override (set by tests) → TG_HOME
+//! env var → $HOME/.tg. The thread-local override lets unit tests
+//! run in parallel without contending on process-global env vars.
 
 use anyhow::{anyhow, Result};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+std::thread_local! {
+    /// Per-thread override for `tg_home()`. Set via `set_test_tg_home`
+    /// from within a unit test; restored to `None` automatically when
+    /// the returned guard is dropped.
+    static TEST_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
 pub fn tg_home() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(p) = TEST_HOME.with(|cell| cell.borrow().clone()) {
+            return p;
+        }
+    }
     if let Ok(p) = std::env::var("TG_HOME") {
         return PathBuf::from(p);
     }
@@ -17,8 +35,11 @@ pub fn pending_path() -> PathBuf { tg_home().join("pending.json") }
 pub fn state_path() -> PathBuf { tg_home().join("state") }
 pub fn inbox_dir() -> PathBuf { tg_home().join("inbox") }
 
-/// Refuses to read paths whose mode is wider than 0600. Used by any
-/// module that loads a secret/token-bearing file.
+#[allow(dead_code)]
+pub fn ensure_dir(p: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(p)
+}
+
 pub fn check_mode_strict(path: &Path) -> Result<()> {
     let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
@@ -32,40 +53,76 @@ pub fn check_mode_strict(path: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod test_helpers {
     use super::*;
-    use crate::paths::test_lock;
 
-    #[test]
-    fn tg_home_uses_override() {
-        let _g = test_lock::acquire();
-        std::env::set_var("TG_HOME", "/tmp/tg-test-xyz");
-        let got = tg_home();
-        std::env::remove_var("TG_HOME");
-        assert_eq!(got, PathBuf::from("/tmp/tg-test-xyz"));
+    /// Guard returned by `set_test_tg_home`. Restores the previous
+    /// thread-local value (or `None`) on drop, so test teardown is
+    /// automatic even on assertion panics.
+    pub struct TestHomeGuard {
+        previous: Option<PathBuf>,
     }
 
-    #[test]
-    fn config_path_is_under_home() {
-        let _g = test_lock::acquire();
-        std::env::set_var("TG_HOME", "/tmp/x");
-        let got = config_path();
-        std::env::remove_var("TG_HOME");
-        assert_eq!(got, PathBuf::from("/tmp/x/config.toml"));
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            let prev = self.previous.take();
+            TEST_HOME.with(|cell| *cell.borrow_mut() = prev);
+        }
+    }
+
+    /// Override `tg_home()` for the calling thread for the duration
+    /// of the returned guard. Tests should do:
+    ///
+    ///     let dir = tempdir().unwrap();
+    ///     let _home = paths::test_helpers::set_test_tg_home(dir.path());
+    ///     // ... test body ...
+    ///     // guard drops at end of scope, override restored
+    ///
+    /// Multiple tests can run in parallel because the override is
+    /// per-thread. No mutex needed.
+    pub fn set_test_tg_home(p: impl Into<PathBuf>) -> TestHomeGuard {
+        let path = p.into();
+        let previous = TEST_HOME.with(|cell| {
+            let prev = cell.borrow().clone();
+            *cell.borrow_mut() = Some(path);
+            prev
+        });
+        TestHomeGuard { previous }
     }
 }
 
 #[cfg(test)]
-pub mod test_lock {
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+mod tests {
+    use super::*;
 
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    #[test]
+    fn tg_home_uses_thread_local_override() {
+        let _h = test_helpers::set_test_tg_home("/tmp/tg-test-xyz");
+        assert_eq!(tg_home(), PathBuf::from("/tmp/tg-test-xyz"));
+        // _h drops at end of scope, override restored.
+    }
 
-    /// Hold this guard for the duration of any test that sets TG_HOME.
-    /// All such tests across all modules acquire the same lock, so they
-    /// execute serially with respect to TG_HOME mutation even when cargo
-    /// runs them in parallel threads.
-    pub fn acquire() -> MutexGuard<'static, ()> {
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+    #[test]
+    fn config_path_picks_up_override() {
+        let _h = test_helpers::set_test_tg_home("/tmp/x");
+        assert_eq!(config_path(), PathBuf::from("/tmp/x/config.toml"));
+    }
+
+    #[test]
+    fn thread_locals_do_not_leak_across_threads() {
+        // Set the override on this thread.
+        let _h = test_helpers::set_test_tg_home("/tmp/this-thread");
+
+        // Spawn a worker that should see NO override (or whatever the
+        // env var / HOME default is, but NOT /tmp/this-thread).
+        let worker_value = std::thread::spawn(|| tg_home())
+            .join()
+            .unwrap();
+
+        assert_ne!(
+            worker_value,
+            PathBuf::from("/tmp/this-thread"),
+            "override leaked to worker thread"
+        );
     }
 }
