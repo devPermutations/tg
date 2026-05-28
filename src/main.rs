@@ -6,6 +6,7 @@ mod pending;
 mod tmux;
 mod api;
 mod init;
+mod access;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
@@ -37,9 +38,14 @@ enum Command {
     /// Send a message (with optional --file attachments).
     Send,
     /// Append a chat_id to the allowlist.
-    Allow,
+    Allow {
+        #[arg(long)] chat_id: i64,
+        #[arg(long)] label: Option<String>,
+    },
     /// Remove a chat_id from the allowlist.
-    Deny,
+    Deny {
+        #[arg(long)] chat_id: i64,
+    },
     /// Print the current allowlist.
     List,
     /// Confirm a pending pairing by code.
@@ -62,9 +68,9 @@ fn main() -> anyhow::Result<()> {
         Command::Install => todo!("Task 14: install"),
         Command::Listen => todo!("Task 13: listen"),
         Command::Send => todo!("Task 12: send"),
-        Command::Allow => todo!("Task 10: allow"),
-        Command::Deny => todo!("Task 10: deny"),
-        Command::List => todo!("Task 10: list"),
+        Command::Allow { chat_id, label } => access::allow(chat_id, label),
+        Command::Deny { chat_id } => access::deny(chat_id),
+        Command::List => access::list(),
         Command::Pair => todo!("Task 11: pair"),
         Command::Pending => todo!("Task 11: pending"),
         Command::Reject => todo!("Task 11: reject"),
