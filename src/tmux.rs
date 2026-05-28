@@ -12,7 +12,17 @@ use std::process::Command;
 /// inject extra prompt lines or escape sequences. `tmux send-keys -l`
 /// otherwise types each character literally.
 pub fn sanitize(text: &str) -> String {
-    text.replace(['\r', '\n'], " ")
+    // Collapse runs of \r/\n to a single space; then strip C0 controls
+    // (keeping printable space). Done as a single pipeline so the
+    // newline-originated spaces aren't themselves collapsed against
+    // pre-existing spaces in the source — only consecutive newlines
+    // produce a single replacement space.
+    let joined = text
+        .split(|c: char| c == '\r' || c == '\n')
+        .filter(|seg| !seg.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    joined
         .chars()
         .filter(|c| !c.is_control() || *c == ' ')
         .collect()
@@ -92,5 +102,15 @@ mod tests {
     fn format_inbound_sanitizes_body() {
         let got = format_inbound(None, 1, "line1\nline2");
         assert_eq!(got, "[telegram chat_id=1] line1 line2");
+    }
+
+    #[test]
+    fn sanitize_collapses_newline_runs() {
+        // CRLF and consecutive newlines both collapse to a single space.
+        assert_eq!(sanitize("a\r\nb"), "a b");
+        assert_eq!(sanitize("a\n\nb"), "a b");
+        assert_eq!(sanitize("a\r\n\nb"), "a b");
+        // Pre-existing double spaces in the source are NOT collapsed.
+        assert_eq!(sanitize("a  b"), "a  b");
     }
 }
