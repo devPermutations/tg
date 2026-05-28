@@ -253,6 +253,7 @@ people can actually inject keystrokes into your pane).
 Outbound is intentionally ungated: `tg send --chat-id N` works for any
 chat_id the bot has ever seen, even one not in your config. That's the
 point of an outbound CLI — you decide who to talk to.
+Anyone with shell access to your host can `tg send --chat-id N` to any chat the bot has ever seen — outbound assumes the local account is trusted.
 
 Inbound is the dangerous direction (someone else's text becoming your
 typed input), and *that* is what the allowlist and owner gate protect.
@@ -538,7 +539,7 @@ that an unfamiliar engineer (or an agent) could execute end-to-end.
 ## Testing
 
 ```bash
-cargo test            # 40 tests: 37 unit, 1 inbound integration, 2 outbound integration
+cargo test            # runs the full suite (unit + integration)
 ```
 
 Integration tests stub `api.telegram.org` with `tiny_http` and stub

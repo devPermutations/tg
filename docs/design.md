@@ -56,6 +56,7 @@ Project layout:
 │   ├── send.rs       # outbound: text + multipart upload
 │   ├── access.rs     # allow / deny / pair / pending / reject
 │   ├── install.rs    # symlink + systemd unit copy + enable
+│   ├── transcribe.rs # whisper.cpp HTTP client — voice/audio transcription
 │   └── tmux.rs       # send-keys wrapper (spawnSync for ordering)
 ├── systemd/tg-listen.service
 └── docs/design.md
