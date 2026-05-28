@@ -2,7 +2,12 @@
 name = "tg"
 version = "0.1.0"
 edition = "2021"
-description = "Self-contained Telegram bot CLI: inbound daemon (tmux send-keys delivery) + outbound CLI (text + attachments)."
+description = "Self-contained Telegram bot CLI: inbound daemon types incoming messages into a tmux pane via send-keys; outbound CLI sends text and attachments."
+license = "MIT"
+repository = "https://github.com/devPermutations/tg"
+readme = "README.md"
+keywords = ["telegram", "bot", "tmux", "cli", "daemon"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "tg"
