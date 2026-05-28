@@ -2,6 +2,8 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -9,7 +11,7 @@ use std::path::Path;
 pub struct Config {
     pub bot_token: String,
     pub tmux_target: String,
-    #[serde(default, rename = "allow")]
+    #[serde(default)]
     pub allow: Vec<AllowEntry>,
 }
 
@@ -31,14 +33,24 @@ impl Config {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parent = path.parent().ok_or_else(|| anyhow!("config path has no parent"))?;
+        std::fs::create_dir_all(parent)?;
         let body = toml::to_string_pretty(self)?;
-        std::fs::write(path, body)?;
-        let mut perms = std::fs::metadata(path)?.permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(path, perms)?;
+        // Write to a sibling temp file at 0o600, then atomically rename
+        // over the destination. The temp file never exists with looser
+        // permissions, and a crash mid-write leaves the original config
+        // intact.
+        let tmp = parent.join(format!(".config.toml.tmp.{}", std::process::id()));
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(body.as_bytes())?;
+        }
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -101,7 +113,7 @@ mod tests {
         perms.set_mode(0o644);
         std::fs::set_permissions(&p, perms).unwrap();
         let err = Config::load(&p).unwrap_err().to_string();
-        assert!(err.contains("mode"));
+        assert!(err.contains("644"), "expected error to include octal mode 644; got: {err}");
     }
 
     #[test]
