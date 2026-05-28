@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+mod paths;
+
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
 struct Cli {
