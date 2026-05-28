@@ -105,20 +105,22 @@ fn build_body(msg: &Message, client: &Client) -> Result<(String, Option<PathBuf>
     // Text or caption forms the body.
     let body = msg.text.clone()
         .or_else(|| msg.caption.clone())
-        .unwrap_or_else(|| {
-            if msg.photo.is_some() { "(photo)".into() }
-            else if msg.document.is_some() { "(document)".into() }
-            else { "(unsupported)".into() }
-        });
+        .unwrap_or_else(|| render_media_label(msg));
 
-    // Attachment: largest photo, or the document.
+    // Attachment: largest photo, or the document, or voice/audio/sticker.
     let file_id_kind: Option<(&str, Option<&str>)> = msg.photo.as_ref()
         .and_then(|sizes| sizes.last())
         .map(|p| (p.file_id.as_str(), None))
         .or_else(|| msg.document.as_ref().map(|d| (
             d.file_id.as_str(),
             d.file_name.as_deref(),
-        )));
+        )))
+        .or_else(|| msg.voice.as_ref().map(|v| (v.file_id.as_str(), None)))
+        .or_else(|| msg.audio.as_ref().map(|a| (
+            a.file_id.as_str(),
+            a.file_name.as_deref(),
+        )))
+        .or_else(|| msg.sticker.as_ref().map(|s| (s.file_id.as_str(), None)));
 
     let attachment_path = if let Some((file_id, name_hint)) = file_id_kind {
         let f = client.get_file(file_id)?;
@@ -141,6 +143,36 @@ fn build_body(msg: &Message, client: &Client) -> Result<(String, Option<PathBuf>
     };
 
     Ok((body, attachment_path))
+}
+
+/// Stand-in body when a message has media but no text/caption. Keep
+/// these terse: they get typed into a prompt alongside the file path.
+fn render_media_label(msg: &Message) -> String {
+    if msg.photo.is_some() { return "(photo)".into(); }
+    if msg.document.is_some() { return "(document)".into(); }
+    if let Some(v) = &msg.voice {
+        return format!("(voice {})", format_duration(v.duration));
+    }
+    if let Some(a) = &msg.audio {
+        let title = a.title.as_deref()
+            .or(a.performer.as_deref())
+            .or(a.file_name.as_deref())
+            .unwrap_or("audio");
+        return format!("(audio {}: {})", format_duration(a.duration), title);
+    }
+    if let Some(s) = &msg.sticker {
+        match s.emoji.as_deref() {
+            Some(e) => return format!("(sticker {e})"),
+            None => return "(sticker)".into(),
+        }
+    }
+    "(unsupported media)".into()
+}
+
+fn format_duration(secs: u32) -> String {
+    let m = secs / 60;
+    let s = secs % 60;
+    format!("{m}:{s:02}")
 }
 
 fn handle_gated(client: &Client, chat_id: i64, username: Option<&str>) -> Result<()> {
@@ -234,5 +266,94 @@ mod tests {
         std::env::remove_var("TG_HOME");
         write_result.unwrap();
         assert_eq!(read_result.unwrap(), 12345);
+    }
+
+    use crate::api::{Audio, Chat, Sticker, Voice};
+
+    fn empty_msg() -> Message {
+        Message {
+            message_id: 1,
+            from: None,
+            chat: Chat { id: 1, kind: "private".into() },
+            text: None,
+            caption: None,
+            photo: None,
+            document: None,
+            voice: None,
+            audio: None,
+            sticker: None,
+        }
+    }
+
+    #[test]
+    fn format_duration_pads_seconds() {
+        assert_eq!(format_duration(0), "0:00");
+        assert_eq!(format_duration(7), "0:07");
+        assert_eq!(format_duration(65), "1:05");
+        assert_eq!(format_duration(3661), "61:01");
+    }
+
+    #[test]
+    fn render_media_label_voice() {
+        let mut m = empty_msg();
+        m.voice = Some(Voice {
+            file_id: "x".into(), file_unique_id: "y".into(),
+            duration: 12, mime_type: Some("audio/ogg".into()), file_size: None,
+        });
+        assert_eq!(render_media_label(&m), "(voice 0:12)");
+    }
+
+    #[test]
+    fn render_media_label_audio_uses_title() {
+        let mut m = empty_msg();
+        m.audio = Some(Audio {
+            file_id: "x".into(), file_unique_id: "y".into(),
+            duration: 65,
+            performer: Some("Artist".into()),
+            title: Some("Song".into()),
+            file_name: None, mime_type: None, file_size: None,
+        });
+        assert_eq!(render_media_label(&m), "(audio 1:05: Song)");
+    }
+
+    #[test]
+    fn render_media_label_audio_falls_back_to_filename() {
+        let mut m = empty_msg();
+        m.audio = Some(Audio {
+            file_id: "x".into(), file_unique_id: "y".into(),
+            duration: 3,
+            performer: None, title: None,
+            file_name: Some("podcast.mp3".into()),
+            mime_type: None, file_size: None,
+        });
+        assert_eq!(render_media_label(&m), "(audio 0:03: podcast.mp3)");
+    }
+
+    #[test]
+    fn render_media_label_sticker_with_emoji() {
+        let mut m = empty_msg();
+        m.sticker = Some(Sticker {
+            file_id: "x".into(), file_unique_id: "y".into(),
+            emoji: Some("🎉".into()),
+            set_name: None, is_animated: false, is_video: false, file_size: None,
+        });
+        assert_eq!(render_media_label(&m), "(sticker 🎉)");
+    }
+
+    #[test]
+    fn render_media_label_sticker_without_emoji() {
+        let mut m = empty_msg();
+        m.sticker = Some(Sticker {
+            file_id: "x".into(), file_unique_id: "y".into(),
+            emoji: None,
+            set_name: None, is_animated: false, is_video: false, file_size: None,
+        });
+        assert_eq!(render_media_label(&m), "(sticker)");
+    }
+
+    #[test]
+    fn render_media_label_unknown() {
+        let m = empty_msg();
+        assert_eq!(render_media_label(&m), "(unsupported media)");
     }
 }

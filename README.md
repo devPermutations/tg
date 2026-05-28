@@ -132,12 +132,24 @@ Incoming text messages appear in your tmux pane as:
 [telegram @alice (chat_id=1234567890)] hello there
 ```
 
-Attachments (photos / documents) are downloaded to `~/.tg/inbox/` and
-the path is appended to the typed line:
+Attachments are downloaded to `~/.tg/inbox/` and the path is appended
+to the typed line. Supported media types: **photos, documents, voice
+messages, audio files, stickers**.
 
 ```
 [telegram @alice (chat_id=1234567890)] check this out [file: /home/me/.tg/inbox/1716852720-AgADBA...jpg]
 ```
+
+When a message has media but no caption, a stand-in label appears:
+
+```
+[telegram @alice (chat_id=1234567890)] (voice 0:12) [file: /home/me/.tg/inbox/.../voice.ogg]
+[telegram @alice (chat_id=1234567890)] (audio 3:42: Bohemian Rhapsody) [file: ...]
+[telegram @alice (chat_id=1234567890)] (sticker 🎉) [file: ...]
+```
+
+Inbound video, animation (GIF), and video_note types are currently
+unsupported — they render as `(unsupported media)` with no download.
 
 ## Subcommands
 
