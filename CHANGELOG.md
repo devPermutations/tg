@@ -8,12 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(no unreleased changes)
+
+## [0.7.0] — 2026-05-28
+
+Architecture-review part-two: deferred items now closed.
+
+### Added
+
+- **Deployment artifacts** for non-Linux+systemd targets:
+  `launchd/com.devpermutations.tg.plist` (macOS LaunchAgent template),
+  `Dockerfile` (multi-stage Alpine musl static build), and
+  `.github/workflows/{ci,release}.yml` (cargo fmt+clippy+test on push,
+  static-musl binary attached to GitHub releases on tag push).
+- `docs/install-non-linux.md` walking through macOS / Docker / OpenRC.
+- **SIGHUP-based config reload.** `systemctl --user kill --signal=HUP
+  tg-listen` (or `kill -HUP <pid>`) makes the daemon re-read its
+  config from disk without dropping the Telegram long-poll. Token
+  changes rebuild the ureq Client transparently. Reload failures log
+  a warning and keep the in-memory copy — never crash on bad config.
+- `MediaRef` enum on the API surface (`api::types`) with `Photo`,
+  `Document`, `Voice`, `Audio`, `Sticker` variants. `Message::media_ref()`
+  extracts it; `MediaRef::is_transcribable()` dispatches the whisper
+  branch. Replaces the previous opaque `Option<(&str, Option<&str>)>`
+  in `build_body`.
+- `TmuxClient` struct wrapping `tmux_bin: &str` plus `target_alive`
+  and `send_line` methods. `handle_update` loses the deep string-
+  threading.
+
 ### Changed
 
 - **Crate renamed from `tg` to `tgcli`** for crates.io publication.
   The binary name stays `tg`; only the install command differs:
   `cargo install tgcli`. Source-tree installs (`cargo install --path .`)
   are unaffected.
+- **`TG_HOME` test-mutex replaced with a per-thread override.**
+  `paths::test_helpers::set_test_tg_home(path)` returns a guard
+  that overrides `tg_home()` for the calling thread and restores
+  on drop. The process-wide `Mutex` is gone; unit tests run truly
+  parallel.
+- **`api.rs` split into `api/client.rs` + `api/types.rs` + `api/mod.rs`**
+  (re-exports preserve all existing `crate::api::*` paths).
+- **`access.rs` split into `access/allowlist.rs` + `access/pairing.rs`
+  + `access/mod.rs`** (re-exports preserve `crate::access::*`).
+
+### Internal
+
+- New deps: `signal-hook = "0.3"` (one transitive dep,
+  `signal-hook-registry`).
+- Test count: 70 total (64 unit + 3 inbound integration + 2 outbound
+  integration + 1 transcribe e2e). The thread-local refactor
+  removed 4 mutex-acquire calls; the paths module gained 3 new
+  tests for the thread-local isolation invariant.
 
 ## [0.6.0] — 2026-05-28
 
