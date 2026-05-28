@@ -205,7 +205,6 @@ pub struct Document {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
     use std::sync::Arc;
     use std::thread;
 
