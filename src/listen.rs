@@ -16,6 +16,19 @@ use crate::{paths, tmux};
 
 const POLL_TIMEOUT_SECS: u32 = 30;
 
+/// In-memory state that the listen loop carries across iterations.
+/// Persisted state (offset, pending) lives on disk; this is purely
+/// ephemeral throttle-and-metrics scratch space.
+#[derive(Default)]
+struct LoopState {
+    /// Last "agent offline" reply sent per chat_id, used for the
+    /// 30-second throttle so a sender doesn't get a flood of offline
+    /// notices while the target pane is down.
+    offline_reply_last_sent: std::collections::HashMap<i64, std::time::Instant>,
+}
+
+const OFFLINE_REPLY_THROTTLE_SECS: u64 = 30;
+
 pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     let cfg_path = paths::config_path();
     let cfg = Config::load(&cfg_path)?;
@@ -24,6 +37,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
 
     let mut offset = read_offset()?;
     let mut backoff_secs: u64 = 1;
+    let mut state = LoopState::default();
 
     loop {
         match client.get_updates(offset, POLL_TIMEOUT_SECS) {
@@ -31,7 +45,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
                 backoff_secs = 1;
                 for u in updates {
                     let next = u.update_id + 1;
-                    if let Err(e) = handle_update(u, &cfg, &client, tmux_bin) {
+                    if let Err(e) = handle_update(u, &cfg, &client, tmux_bin, &mut state) {
                         tracing::warn!("handle_update failed: {e:#}");
                     }
                     offset = offset.max(next);
@@ -56,7 +70,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     }
 }
 
-fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Result<()> {
+fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state: &mut LoopState) -> Result<()> {
     let Some(msg) = u.message else { return Ok(()); };
     let chat_id = msg.chat.id;
     let user_label = msg.from.as_ref().and_then(|f| f.username.clone());
@@ -85,8 +99,32 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
 
     // Allowed and is owner — check tmux target.
     if !tmux::target_alive(tmux_bin, &cfg.tmux_target) {
-        let _ = client.send_message(chat_id, "agent offline (Claude Code not running)", None, None);
-        tracing::warn!("dropping inbound from {chat_id}: tmux target {} not alive", cfg.tmux_target);
+        // Throttle the offline reply so we don't spam the sender while
+        // the pane is down. The pane being down is usually a "user closed
+        // their session" or "host rebooted" state — recovery typically
+        // takes minutes, not seconds, so one reply every 30s is plenty.
+        let now = std::time::Instant::now();
+        let last = state.offline_reply_last_sent.get(&chat_id).copied();
+        let should_reply = match last {
+            None => true,
+            Some(t) => now.duration_since(t).as_secs() >= OFFLINE_REPLY_THROTTLE_SECS,
+        };
+        if should_reply {
+            let msg = format!(
+                "agent offline (target pane '{}' is not active)",
+                cfg.tmux_target
+            );
+            if let Err(e) = client.send_message(chat_id, &msg, None, None) {
+                tracing::warn!("offline-reply send_message failed for {chat_id}: {e:#}");
+            } else {
+                state.offline_reply_last_sent.insert(chat_id, now);
+            }
+        }
+        tracing::warn!(
+            "dropping inbound from {chat_id}: tmux target {} not alive (reply {})",
+            cfg.tmux_target,
+            if should_reply { "sent" } else { "throttled" },
+        );
         return Ok(());
     }
 
@@ -121,6 +159,11 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
         None => line,
     };
     tmux::send_line(tmux_bin, &cfg.tmux_target, &final_line)?;
+    tracing::info!(
+        "delivered inbound from chat_id {chat_id} ({} bytes) to {}",
+        final_line.len(),
+        cfg.tmux_target,
+    );
     Ok(())
 }
 
