@@ -9,9 +9,12 @@ use std::sync::Arc;
 use std::thread;
 
 fn binary() -> std::path::PathBuf {
-    // CARGO_BIN_EXE_<name> is set by cargo when running integration tests.
-    // Fall back to locating the binary via CARGO_MANIFEST_DIR for environments
-    // where the env var is not injected (e.g. some cargo versions / setups).
+    // CARGO_BIN_EXE_<name> is injected by cargo for integration tests (since Rust 1.43).
+    // However, cargo 1.93 (host) has a bug where it silently omits the injection; the fix
+    // landed sometime between 1.93 and 1.95 (confirmed: 1.95 injects it correctly).
+    // The fallback below keeps tests green on the host until the toolchain is updated.
+    // NOTE: the fallback hardcodes `debug`; running `cargo test --release` on the host
+    // will break if the binary is only built in release. Upgrade to >=1.95 when possible.
     if let Ok(exe) = std::env::var("CARGO_BIN_EXE_tg") {
         return std::path::PathBuf::from(exe);
     }
