@@ -11,6 +11,6 @@ mod types;
 pub use client::Client;
 pub(crate) use client::redact_err;
 pub use types::{
-    ApiResponse, Audio, Chat, Document, File, Message, PhotoSize,
+    ApiResponse, Audio, Chat, Document, File, MediaRef, Message, PhotoSize,
     Sticker, Update, User, Voice,
 };

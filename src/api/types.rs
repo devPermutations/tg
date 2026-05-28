@@ -112,3 +112,82 @@ pub struct File {
     #[serde(default)] pub file_size: Option<u64>,
     pub file_path: Option<String>,
 }
+
+/// What kind of attachment a Telegram message carries. Used by the
+/// listen daemon to dispatch download + display. Each variant carries
+/// the `file_id` (Telegram-provided handle to fetch via `getFile`)
+/// and any optional metadata that's specific to that kind (filename
+/// hint, sticker emoji, etc.).
+///
+/// The variants explicitly enumerate the supported kinds — video,
+/// animation, and video_note are NOT handled in v0.7 and would be
+/// added as new variants here.
+#[derive(Debug)]
+pub enum MediaRef<'a> {
+    Photo { file_id: &'a str },
+    Document { file_id: &'a str, name_hint: Option<&'a str> },
+    Voice { file_id: &'a str },
+    Audio { file_id: &'a str, name_hint: Option<&'a str> },
+    Sticker { file_id: &'a str, emoji: Option<&'a str> },
+}
+
+impl<'a> MediaRef<'a> {
+    pub fn file_id(&self) -> &'a str {
+        match self {
+            MediaRef::Photo { file_id }
+            | MediaRef::Document { file_id, .. }
+            | MediaRef::Voice { file_id }
+            | MediaRef::Audio { file_id, .. }
+            | MediaRef::Sticker { file_id, .. } => file_id,
+        }
+    }
+
+    pub fn name_hint(&self) -> Option<&'a str> {
+        match self {
+            MediaRef::Document { name_hint, .. } | MediaRef::Audio { name_hint, .. } => *name_hint,
+            _ => None,
+        }
+    }
+
+    /// True if this media kind should be transcribed when whisper is
+    /// configured. Voice and audio yes; photo/document/sticker no.
+    pub fn is_transcribable(&self) -> bool {
+        matches!(self, MediaRef::Voice { .. } | MediaRef::Audio { .. })
+    }
+}
+
+impl Message {
+    /// Returns the dispatch-relevant attachment reference, if any.
+    /// Precedence matches v0.5/0.6 behavior: photo > document > voice
+    /// > audio > sticker. Returns `None` for text-only messages or
+    /// media kinds we don't handle (video, animation, video_note).
+    pub fn media_ref(&self) -> Option<MediaRef<'_>> {
+        if let Some(sizes) = self.photo.as_ref() {
+            if let Some(p) = sizes.last() {
+                return Some(MediaRef::Photo { file_id: p.file_id.as_str() });
+            }
+        }
+        if let Some(d) = &self.document {
+            return Some(MediaRef::Document {
+                file_id: d.file_id.as_str(),
+                name_hint: d.file_name.as_deref(),
+            });
+        }
+        if let Some(v) = &self.voice {
+            return Some(MediaRef::Voice { file_id: v.file_id.as_str() });
+        }
+        if let Some(a) = &self.audio {
+            return Some(MediaRef::Audio {
+                file_id: a.file_id.as_str(),
+                name_hint: a.file_name.as_deref(),
+            });
+        }
+        if let Some(s) = &self.sticker {
+            return Some(MediaRef::Sticker {
+                file_id: s.file_id.as_str(),
+                emoji: s.emoji.as_deref(),
+            });
+        }
+        None
+    }
+}

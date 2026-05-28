@@ -66,6 +66,31 @@ pub fn send_line(tmux_bin: &str, target: &str, line: &str) -> Result<()> {
     Ok(())
 }
 
+/// Owns the `tmux` binary path. `target_alive` and `send_line`
+/// become methods so the binary path doesn't have to be threaded
+/// through every caller separately.
+pub struct TmuxClient {
+    bin: String,
+}
+
+impl TmuxClient {
+    pub fn new(bin: impl Into<String>) -> Self {
+        Self { bin: bin.into() }
+    }
+
+    /// Check whether the given tmux target exists. Used to decide
+    /// "agent offline" behavior.
+    pub fn target_alive(&self, target: &str) -> bool {
+        target_alive(&self.bin, target)
+    }
+
+    /// Send `line` followed by Enter to `target`. Two separate
+    /// invocations of `tmux send-keys`.
+    pub fn send_line(&self, target: &str, line: &str) -> Result<()> {
+        send_line(&self.bin, target, line)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

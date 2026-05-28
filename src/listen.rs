@@ -45,6 +45,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     let mut offset = read_offset()?;
     let mut backoff_secs: u64 = 1;
     let mut state = LoopState::default();
+    let tmux_client = tmux::TmuxClient::new(tmux_bin);
 
     loop {
         // SIGHUP since the last iteration? Reload the config in place.
@@ -78,7 +79,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
                 backoff_secs = 1;
                 for u in updates {
                     let next = u.update_id + 1;
-                    if let Err(e) = handle_update(u, &cfg, &client, tmux_bin, &mut state) {
+                    if let Err(e) = handle_update(u, &cfg, &client, &tmux_client, &mut state) {
                         tracing::warn!("handle_update failed: {e:#}");
                     }
                     offset = offset.max(next);
@@ -103,7 +104,7 @@ pub fn run(api_base: &str, tmux_bin: &str) -> Result<()> {
     }
 }
 
-fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state: &mut LoopState) -> Result<()> {
+fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_client: &tmux::TmuxClient, state: &mut LoopState) -> Result<()> {
     let Some(msg) = u.message else { return Ok(()); };
     let chat_id = msg.chat.id;
     let user_label = msg.from.as_ref().and_then(|f| f.username.clone());
@@ -131,7 +132,7 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state
     }
 
     // Allowed and is owner — check tmux target.
-    if !tmux::target_alive(tmux_bin, &cfg.tmux_target) {
+    if !tmux_client.target_alive(&cfg.tmux_target) {
         // Throttle the offline reply so we don't spam the sender while
         // the pane is down. The pane being down is usually a "user closed
         // their session" or "host rebooted" state — recovery typically
@@ -175,7 +176,7 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state
             // Use the accessor so the new [transcription] table wins
             // over the legacy top-level `whisper_url` field.
             if let Some(whisper_url) = cfg.whisper_url() {
-                if msg.voice.is_some() || msg.audio.is_some() {
+                if msg.media_ref().is_some_and(|m| m.is_transcribable()) {
                     match crate::transcribe::transcribe(&p, whisper_url, "ffmpeg") {
                         Ok(text) => {
                             let safe = crate::tmux::sanitize(&text);
@@ -193,7 +194,7 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str, state
         }
         None => line,
     };
-    tmux::send_line(tmux_bin, &cfg.tmux_target, &final_line)?;
+    tmux_client.send_line(&cfg.tmux_target, &final_line)?;
     tracing::info!(
         "delivered inbound from chat_id {chat_id} ({} bytes) to {}",
         final_line.len(),
@@ -208,30 +209,15 @@ fn build_body(msg: &Message, client: &Client) -> Result<(String, Option<PathBuf>
         .or_else(|| msg.caption.clone())
         .unwrap_or_else(|| render_media_label(msg));
 
-    // Attachment: largest photo, or the document, or voice/audio/sticker.
-    let file_id_kind: Option<(&str, Option<&str>)> = msg.photo.as_ref()
-        .and_then(|sizes| sizes.last())
-        .map(|p| (p.file_id.as_str(), None))
-        .or_else(|| msg.document.as_ref().map(|d| (
-            d.file_id.as_str(),
-            d.file_name.as_deref(),
-        )))
-        .or_else(|| msg.voice.as_ref().map(|v| (v.file_id.as_str(), None)))
-        .or_else(|| msg.audio.as_ref().map(|a| (
-            a.file_id.as_str(),
-            a.file_name.as_deref(),
-        )))
-        .or_else(|| msg.sticker.as_ref().map(|s| (s.file_id.as_str(), None)));
-
-    let attachment_path = if let Some((file_id, name_hint)) = file_id_kind {
-        let f = client.get_file(file_id)?;
+    let attachment_path = if let Some(media) = msg.media_ref() {
+        let f = client.get_file(media.file_id())?;
         let path_part = f.file_path.as_deref().unwrap_or("");
         let ext = std::path::Path::new(path_part)
             .extension().and_then(|s| s.to_str()).unwrap_or("bin");
         let ts = chrono::Utc::now().timestamp();
         let inbox = paths::inbox_dir();
         std::fs::create_dir_all(&inbox)?;
-        let stem = name_hint.unwrap_or(&f.file_unique_id);
+        let stem = media.name_hint().unwrap_or(&f.file_unique_id);
         let safe_stem: String = stem.chars()
             .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
             .collect();
