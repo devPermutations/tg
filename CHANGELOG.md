@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no unreleased changes)
+### Changed
+
+- **Crate renamed from `tg` to `tgcli`** for crates.io publication.
+  The binary name stays `tg`; only the install command differs:
+  `cargo install tgcli`. Source-tree installs (`cargo install --path .`)
+  are unaffected.
 
 ## [0.6.0] — 2026-05-28
 

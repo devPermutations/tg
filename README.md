@@ -95,10 +95,18 @@ Prerequisites:
   listen` manually)
 
 ```bash
+# Option 1: from crates.io (once v0.7+ is published there)
+cargo install tgcli
+
+# Option 2: from this repo
 git clone https://github.com/devPermutations/tg
 cd tg
 cargo install --path .
+```
 
+Either way the installed binary is `tg`. Continue:
+
+```bash
 tg install   # symlinks ~/.cargo/bin/tg into ~/.ir/tools/ (if dir exists),
              # installs + enables ~/.config/systemd/user/tg-listen.service
 
@@ -613,9 +621,17 @@ two separate `TG_HOME` directories and two systemd units. The code
 supports it via the env var but the install command doesn't.
 
 **Is this published on crates.io?**
-Not currently — the name `tg` is already taken. If you want
-`cargo install tg`-style installation, open an issue with a rename
-proposal (`tgcli`, `tg-bot`, etc.) and we'll consider it.
+
+The crate is published as `tgcli` (the `tg` name was taken). The
+binary it installs is still `tg`, so usage is unchanged — only the
+install command differs:
+
+```bash
+cargo install tgcli
+```
+
+If you're building from source, `cargo install --path .` from a repo
+clone also works.
 
 ## Roadmap
 
