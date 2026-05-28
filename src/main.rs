@@ -49,11 +49,13 @@ enum Command {
     /// Print the current allowlist.
     List,
     /// Confirm a pending pairing by code.
-    Pair,
+    Pair { code: String },
     /// List pending pairings.
     Pending,
     /// Drop a pending pairing silently (no Telegram reply).
-    Reject,
+    Reject {
+        #[arg(long)] chat_id: i64,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -71,8 +73,8 @@ fn main() -> anyhow::Result<()> {
         Command::Allow { chat_id, label } => access::allow(chat_id, label),
         Command::Deny { chat_id } => access::deny(chat_id),
         Command::List => access::list(),
-        Command::Pair => todo!("Task 11: pair"),
-        Command::Pending => todo!("Task 11: pending"),
-        Command::Reject => todo!("Task 11: reject"),
+        Command::Pair { code } => access::pair(&code, &cli.api_base),
+        Command::Pending => access::pending(),
+        Command::Reject { chat_id } => access::reject(chat_id),
     }
 }
