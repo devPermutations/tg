@@ -9,6 +9,26 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Format `e` with `prefix` and substitute `[REDACTED]` for every
+/// `secret` in `secrets`. Used so token-bearing URLs and similar
+/// secret-bearing strings never reach `tracing` or `anyhow`.
+///
+/// Empty entries in `secrets` are skipped (to keep callers simple
+/// when a config value is optional).
+pub(crate) fn redact_err(
+    prefix: &str,
+    e: impl std::fmt::Display,
+    secrets: &[&str],
+) -> anyhow::Error {
+    let mut s = format!("{prefix}: {e}");
+    for secret in secrets {
+        if !secret.is_empty() {
+            s = s.replace(secret, "[REDACTED]");
+        }
+    }
+    anyhow::anyhow!(s)
+}
+
 #[derive(Clone)]
 pub struct Client {
     pub api_base: String,
@@ -31,24 +51,6 @@ impl Client {
         format!("{}/bot{}/{}", self.api_base.trim_end_matches('/'), self.token, method)
     }
 
-    /// Build an error message with the bot token redacted from any
-    /// embedded URL.
-    ///
-    /// The Telegram Bot API embeds the token in the URL path
-    /// (`/bot{token}/...`). `ureq`'s `Display` for transport and HTTP
-    /// errors includes the full URL, and we forward those errors to
-    /// `tracing` and `anyhow`. Without this guard, transient API
-    /// failures persist the token to journald and any stderr capture
-    /// downstream (cron, CI, `ir run`).
-    ///
-    /// Every `ureq` call site in this module routes its `Err` through
-    /// `redact_err` so the token never reaches a log or error chain.
-    fn redact_err(&self, prefix: &str, e: impl std::fmt::Display) -> anyhow::Error {
-        let raw = format!("{prefix}: {e}");
-        let safe = raw.replace(&self.token, "[REDACTED]");
-        anyhow!(safe)
-    }
-
     /// POST application/json. Used for plain text endpoints.
     fn post_json<T: Serialize, R: serde::de::DeserializeOwned>(
         &self, method: &str, body: &T,
@@ -56,9 +58,9 @@ impl Client {
         let url = self.endpoint(method);
         let resp = self.agent.post(&url)
             .send_json(serde_json::to_value(body)?)
-            .map_err(|e| self.redact_err(&format!("POST {method}"), e))?;
+            .map_err(|e| crate::api::redact_err(&format!("POST {method}"), e, &[&self.token]))?;
         let parsed: ApiResponse<R> = resp.into_json()
-            .map_err(|e| self.redact_err(&format!("parse {method} response"), e))?;
+            .map_err(|e| crate::api::redact_err(&format!("parse {method} response"), e, &[&self.token]))?;
         parsed.into_result()
     }
 
@@ -126,9 +128,9 @@ impl Client {
         let resp = self.agent.post(&url)
             .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
             .send_bytes(&body)
-            .map_err(|e| self.redact_err(&format!("POST {method} (multipart)"), e))?;
+            .map_err(|e| crate::api::redact_err(&format!("POST {method} (multipart)"), e, &[&self.token]))?;
         let parsed: ApiResponse<Message> = resp.into_json()
-            .map_err(|e| self.redact_err(&format!("parse {method} response"), e))?;
+            .map_err(|e| crate::api::redact_err(&format!("parse {method} response"), e, &[&self.token]))?;
         parsed.into_result()
     }
 
@@ -187,8 +189,8 @@ impl Client {
         // `.with_context(|url|)` here — that would re-inject the URL
         // and defeat redaction downstream.
         let resp = self.agent.get(&url).call()
-            .map_err(|e| self.redact_err(
-                &format!("GET file from telegram ({})", file.file_unique_id), e))?;
+            .map_err(|e| crate::api::redact_err(
+                &format!("GET file from telegram ({})", file.file_unique_id), e, &[&self.token]))?;
         let mut reader = resp.into_reader();
         if let Some(parent) = dest.parent() { std::fs::create_dir_all(parent)?; }
         let mut out = std::fs::File::create(dest)?;

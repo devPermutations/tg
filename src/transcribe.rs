@@ -100,8 +100,13 @@ pub fn transcribe(audio_path: &Path, whisper_url: &str, ffmpeg_bin: &str) -> Res
         .post(&url)
         .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
         .send_bytes(&body)
-        .with_context(|| format!("POST {url}"))?;
-    let json: serde_json::Value = resp.into_json().context("parse whisper response")?;
+        .map_err(|e| crate::api::redact_err(
+            "POST whisper /inference",
+            e,
+            &[whisper_url],
+        ))?;
+    let json: serde_json::Value = resp.into_json()
+        .map_err(|e| crate::api::redact_err("parse whisper response", e, &[whisper_url]))?;
     let text = json
         .get("text")
         .and_then(|v| v.as_str())
@@ -128,5 +133,34 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("too large"), "got: {err}");
+    }
+
+    #[test]
+    fn whisper_creds_do_not_leak_in_transport_error() {
+        // Unreachable port → ureq transport error.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        // A whisper_url with embedded creds we want to make sure never appears.
+        let url = format!("http://alice:SUPER_SECRET_PW@127.0.0.1:{port}");
+
+        // Build a small dummy OGG file so the size-cap doesn't reject it first.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"OggS").unwrap();
+
+        // ffmpeg will likely fail on this fake file; that's fine — we just need
+        // any failure path that touches the URL. The ffmpeg branch errors
+        // before whisper is called. Skip if ffmpeg unavailable.
+        let err_chain = match transcribe(tmp.path(), &url, "ffmpeg") {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => format!("{e:#}"),
+        };
+        // The whole chain — including any nested ureq error — must not
+        // contain the secret password.
+        assert!(
+            !err_chain.contains("SUPER_SECRET_PW"),
+            "credentials leaked: {err_chain}"
+        );
     }
 }
