@@ -204,15 +204,21 @@ listen` with `Restart=always, RestartSec=5`. Logs go to journald.
   sibling temp file + rename — the file never transiently exists at a
   wider mode, even on overwrite. The daemon **refuses to start** if
   `config.toml` or `pending.json` have any group/other bits set.
-- **No silent leakage of bot existence.** Unknown senders get exactly
-  one response: a pairing reminder, throttled to once per 30 seconds
-  per chat. The bot does not echo errors, does not confirm receipt of
-  messages it dropped, and does not reveal who's allowlisted.
+- **No silent leakage of bot existence.** With `owner_chat_id` set
+  (the recommended deployment), unknown senders get **no reply at
+  all** — their DMs are silently dropped, so the bot's existence is
+  not advertised to anyone you haven't explicitly allowlisted. (In the
+  legacy unowned mode, unknown senders get a throttled pairing
+  reminder instead.)
 - **Owner-only inbound delivery.** With `owner_chat_id` set, only the
   owner's DMs are typed into the tmux pane. Other allowlisted contacts
   can be `tg send`-ed to but their inbound DMs are silently dropped —
   the agent in the pane never sees them. This stops contact-list
   members from injecting prompts into whatever's running in the pane.
+- **Pairing disabled when owner is set.** With an owner configured,
+  the bot will not auto-create pending pairings for unknown senders.
+  The owner is the only party authorized to grow the contact list,
+  via `tg allow --chat-id N`.
 - **Pairing code strength.** 6 alphanumeric uppercase characters
   (`[A-Z0-9]`), 36⁶ ≈ 2.2B possibilities, expires in 1 hour, rate-limited
   by the once-per-30s reminder cadence. The `tg pair` confirmation runs

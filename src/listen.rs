@@ -63,6 +63,15 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
 
     // Gate
     if !cfg.is_allowed(chat_id) {
+        // With an owner set, pairing is disabled — only the owner is
+        // trusted to add contacts (via `tg allow`). Unknown senders are
+        // silently dropped so the bot doesn't leak its existence.
+        if cfg.owner_chat_id.is_some() {
+            tracing::info!(
+                "dropping inbound from unknown chat_id {chat_id}: pairing disabled (owner is set)"
+            );
+            return Ok(());
+        }
         return handle_gated(client, chat_id, user_label.as_deref());
     }
 

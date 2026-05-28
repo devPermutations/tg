@@ -83,15 +83,22 @@ Runtime layout:
 3. For each update:
    a. Resolve `chat_id` and sender info.
    b. **Gate:**
-      - In `[[allow]]` → deliver.
-      - In `pending.json`, non-expired → re-send the "Still pending"
-        reminder (throttled per chat_id, max one reminder per 30s). Drop
-        the message. Move on.
-      - In `pending.json`, expired → generate new code, replace entry,
-        send fresh "Pairing required" reply. Drop.
-      - Not in either → generate code (6 chars `[A-Z0-9]`, 1-hour
-        expiry), write to `pending.json`, send "Pairing required — run
-        in your terminal: `tg pair XXXXXX`". Drop.
+      - In `[[allow]]` AND chat_id == `owner_chat_id` (or
+        `owner_chat_id` is unset) → deliver.
+      - In `[[allow]]` but not the owner → outbound-only contact,
+        silently drop (since 0.2).
+      - Not in `[[allow]]` AND `owner_chat_id` is set → silently drop
+        (pairing disabled, since 0.3). The bot stays invisible to
+        unknown senders.
+      - Not in `[[allow]]` AND `owner_chat_id` is unset (legacy
+        unowned mode) → pairing flow:
+        - In `pending.json`, non-expired → re-send the "Still pending"
+          reminder (throttled per chat_id, max one reminder per 30s).
+        - In `pending.json`, expired → generate new code, replace
+          entry, send fresh "Pairing required" reply.
+        - Not in either → generate code (6 chars `[A-Z0-9]`, 1-hour
+          expiry), write to `pending.json`, send "Pairing required —
+          run in your terminal: `tg pair XXXXXX`".
    c. **If tmux target missing** (`tmux has-session -t <target>` fails) →
       `sendMessage` "agent offline (Claude Code not running)" to the
       sender; log; advance offset.
