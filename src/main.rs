@@ -7,6 +7,7 @@ mod tmux;
 mod api;
 mod init;
 mod access;
+mod send;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
@@ -36,7 +37,13 @@ enum Command {
     /// Inbound daemon: poll Telegram, gate, deliver via tmux send-keys.
     Listen,
     /// Send a message (with optional --file attachments).
-    Send,
+    Send {
+        #[arg(long)] chat_id: i64,
+        #[arg(long)] text: Option<String>,
+        #[arg(long)] file: Vec<std::path::PathBuf>,
+        #[arg(long)] format: Option<String>,
+        #[arg(long = "reply-to")] reply_to: Option<i64>,
+    },
     /// Append a chat_id to the allowlist.
     Allow {
         #[arg(long)] chat_id: i64,
@@ -69,7 +76,8 @@ fn main() -> anyhow::Result<()> {
             init::run(init::InitOpts { token, tmux_target, force }),
         Command::Install => todo!("Task 14: install"),
         Command::Listen => todo!("Task 13: listen"),
-        Command::Send => todo!("Task 12: send"),
+        Command::Send { chat_id, text, file, format, reply_to } =>
+            send::run(send::SendOpts { chat_id, text, files: file, format, reply_to }, &cli.api_base),
         Command::Allow { chat_id, label } => access::allow(chat_id, label),
         Command::Deny { chat_id } => access::deny(chat_id),
         Command::List => access::list(),
