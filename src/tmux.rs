@@ -88,8 +88,8 @@ mod tests {
 
     #[test]
     fn format_inbound_with_username() {
-        let got = format_inbound(Some("virgil"), 8583339367, "hi");
-        assert_eq!(got, "[telegram @virgil (chat_id=8583339367)] hi");
+        let got = format_inbound(Some("alice"), 1234567890, "hi");
+        assert_eq!(got, "[telegram @alice (chat_id=1234567890)] hi");
     }
 
     #[test]

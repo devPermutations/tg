@@ -1,31 +1,52 @@
 # tg
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Made with Rust](https://img.shields.io/badge/Made_with-Rust-orange.svg)](https://www.rust-lang.org/)
 
-A small Rust CLI that wires a Telegram bot to your terminal.
+**Bridge a Telegram bot to your terminal.** The inbound daemon long-polls
+Telegram and types each incoming message directly into a tmux pane via
+`send-keys`. The outbound CLI sends text, photos, and documents to any
+chat in your allowlist. A single static Rust binary plus a systemd user
+unit — no MCP server, no Node/Bun runtime, no plugin manager.
 
-- **`tg listen`** — a daemon that long-polls Telegram and types each incoming
-  message directly into a tmux pane via `send-keys`, so the message becomes
-  user input for whatever you have running there (a shell, a TUI, an agent).
-- **`tg send`** — outbound CLI. Sends text, photos, and documents to any
-  chat in your allowlist.
+```text
+[on your phone, you DM the bot]
+   "deploy the staging service?"
 
-Access is gated by a per-chat allowlist with a pairing flow: an unknown
-sender DM'ing the bot gets a one-time code; you confirm with `tg pair
-XXXXXX` from your terminal. State and config live under `~/.tg/` at mode
-`0600`.
+[in your tmux pane]
+   $ [telegram @alice (chat_id=1234567890)] deploy the staging service?
+   $
+```
 
-No MCP server, no Node/Bun runtime, no plugin manager — a single static
-Rust binary plus a systemd user unit.
+Whatever you have running in that pane — a shell, an agent, a TUI — sees
+the message as if you'd typed it.
+
+## Table of contents
+
+- [Why this exists](#why-this-exists)
+- [Install](#install)
+- [Usage](#usage)
+- [Subcommands](#subcommands)
+- [Configuration](#configuration)
+- [Security model](#security-model)
+- [Architecture](#architecture)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
 
 ## Why this exists
 
 I wanted a Telegram bridge into [Claude
-Code](https://docs.claude.com/en/docs/claude-code) — type a message on my
-phone, have it land in the agent's prompt — without running a Node/Bun
-MCP server and without depending on undocumented Claude Code
-notification machinery. The send-keys approach is dumb-simple and works
-on any TUI: Claude Code, Aider, a plain shell, Vim, whatever.
+Code](https://docs.claude.com/en/docs/claude-code) — type a message on
+my phone, have it land in the agent's prompt — without running a
+Node/Bun MCP server, and without depending on undocumented host
+notification machinery that may or may not deliver. The send-keys
+approach is dumb-simple and works on any TUI: Claude Code, Aider, a
+plain shell, Vim, anything that reads `stdin`.
 
 If you want the same shape for some other terminal app, this CLI works
 out of the box. Point `tmux_target` at the pane you want messages
@@ -33,74 +54,83 @@ delivered to.
 
 ## Install
 
-Prerequisites: Rust 1.75+, tmux, a Telegram bot token (from
-[@BotFather](https://t.me/BotFather)), and systemd (for the daemon
-supervisor).
+Prerequisites:
+
+- Rust 1.75+ (just for the build)
+- tmux 3.0+
+- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
+- systemd (for the daemon supervisor; not required if you run `tg
+  listen` manually)
 
 ```bash
 git clone https://github.com/devPermutations/tg
 cd tg
 cargo install --path .
 
-tg install   # symlinks ~/.cargo/bin/tg -> ~/.ir/tools/tg (if dir exists),
+tg install   # symlinks ~/.cargo/bin/tg into ~/.ir/tools/ (if dir exists),
              # installs + enables ~/.config/systemd/user/tg-listen.service
 
-tg init      # writes ~/.tg/config.toml (mode 0600); prompts for token
-             # and tmux target (default: root:1)
+tg init      # writes ~/.tg/config.toml at mode 0600;
+             # prompts for token and tmux target (default: root:1)
 
 systemctl --user start tg-listen
 journalctl --user -u tg-listen -f          # tail logs
 ```
 
 To allowlist someone, either:
-- Have them DM the bot first; they'll get a pairing code; you run `tg
-  pair XXXXXX`.
-- Or add them directly: `tg allow --chat-id 12345 --label alice`.
+
+- Have them DM the bot first. They'll get a pairing code on Telegram;
+  you confirm with `tg pair XXXXXX` from your terminal.
+- Or add them directly: `tg allow --chat-id 1234567890 --label alice`.
+
+To find a chat_id without pairing: the bot can use any Telegram
+debug-bot like `@RawDataBot` or check `tg listen`'s journal — every
+unknown sender is logged.
 
 ## Usage
 
-```
-$ tg send --chat-id 8583339367 --text "hello"
+```text
+$ tg send --chat-id 1234567890 --text "hello"
 sent (id: 99)
 
-$ tg send --chat-id 8583339367 --text "look at this" --file ~/screenshot.png
+$ tg send --chat-id 1234567890 --text "look at this" --file ~/screenshot.png
 sent /home/me/screenshot.png (id: 100)
 
-$ tg send --chat-id 8583339367 --text "*bold*" --format markdownv2
+$ tg send --chat-id 1234567890 --text "*bold*" --format markdownv2
 sent (id: 101)
 
-$ tg send --chat-id 8583339367 --text "reply" --reply-to 99
+$ tg send --chat-id 1234567890 --text "reply" --reply-to 99
 sent (id: 102)
 
 $ tg pending
-8598991658	K7M3P2	tim	58m12s remaining
+9876543210	K7M3P2	bob	58m12s remaining
 
 $ tg pair K7M3P2
-paired chat_id 8598991658
+paired chat_id 9876543210
 
 $ tg list
-8583339367	virgil
-8598991658	tim
+1234567890	alice
+9876543210	bob
 ```
 
 Incoming text messages appear in your tmux pane as:
 
 ```
-[telegram @virgil (chat_id=8583339367)] hello there
+[telegram @alice (chat_id=1234567890)] hello there
 ```
 
 Attachments (photos / documents) are downloaded to `~/.tg/inbox/` and
 the path is appended to the typed line:
 
 ```
-[telegram @virgil (chat_id=8583339367)] check this out [file: /home/me/.tg/inbox/1716852720-AgADBA...jpg]
+[telegram @alice (chat_id=1234567890)] check this out [file: /home/me/.tg/inbox/1716852720-AgADBA...jpg]
 ```
 
 ## Subcommands
 
 | Command | Purpose |
 | --- | --- |
-| `tg init` | Write `~/.tg/config.toml` (interactive or via `--token` / `--tmux-target` / `--force`) |
+| `tg init` | Write `~/.tg/config.toml` (interactive, or via `--token` / `--tmux-target` / `--force`) |
 | `tg install` | Symlink binary into `~/.ir/tools/` if present, install + enable systemd user unit |
 | `tg listen` | Inbound daemon (usually run via systemd, not directly) |
 | `tg send` | Outbound: `--chat-id N --text "..."`, optional repeated `--file PATH`, `--format markdownv2`, `--reply-to MSGID` |
@@ -111,6 +141,8 @@ the path is appended to the typed line:
 | `tg pending` | List pending pairings (code, chat_id, label, expiry) |
 | `tg reject` | `--chat-id N` — drop a pending pairing silently |
 
+Every subcommand supports `--help`.
+
 ## Configuration
 
 `~/.tg/config.toml` (mode `0600`):
@@ -120,8 +152,8 @@ bot_token = "..."
 tmux_target = "root:1"
 
 [[allow]]
-chat_id = 8583339367
-label = "virgil"
+chat_id = 1234567890
+label = "alice"
 ```
 
 Runtime layout under `~/.tg/`:
@@ -134,40 +166,74 @@ Runtime layout under `~/.tg/`:
 └── inbox/            # downloaded attachments
 ```
 
+There are no environment-variable overrides for `config.toml` location
+in v0.1 except `TG_HOME` (intended for tests, but works at runtime if
+you really want it elsewhere).
+
+The systemd unit at `~/.config/systemd/user/tg-listen.service` runs `tg
+listen` with `Restart=always, RestartSec=5`. Logs go to journald.
+
 ## Security model
 
-- The bot token lives only in `config.toml`, mode `0600`, atomic-write at
-  `0600` (the file never transiently exists at a wider mode).
-- The daemon refuses to read `config.toml` or `pending.json` if mode is
-  wider than `0600`.
-- Unknown senders are silently dropped except for the pairing reminder
-  (throttled to once per 30 seconds per chat).
-- Pairing codes are 6 alphanumeric uppercase characters, expire in 1
-  hour. The `tg pair` confirmation runs **locally** in your terminal —
-  an attacker reading the code over Telegram cannot pair themselves.
-- Attachment filenames are sanitized to `[A-Za-z0-9._-]` before being
-  joined to the inbox path (no separator injection).
-- Text injected into the tmux pane has C0 controls stripped and
-  newline-runs collapsed before being typed.
+- **Bot token confidentiality.** The token lives only in
+  `config.toml`. Atomic-write at `0600` via `OpenOptions::mode()` + a
+  sibling temp file + rename — the file never transiently exists at a
+  wider mode, even on overwrite. The daemon **refuses to start** if
+  `config.toml` or `pending.json` have any group/other bits set.
+- **No silent leakage of bot existence.** Unknown senders get exactly
+  one response: a pairing reminder, throttled to once per 30 seconds
+  per chat. The bot does not echo errors, does not confirm receipt of
+  messages it dropped, and does not reveal who's allowlisted.
+- **Pairing code strength.** 6 alphanumeric uppercase characters
+  (`[A-Z0-9]`), 36⁶ ≈ 2.2B possibilities, expires in 1 hour, rate-limited
+  by the once-per-30s reminder cadence. The `tg pair` confirmation runs
+  **locally on your machine** — an attacker reading the code over
+  Telegram cannot pair themselves.
+- **Filename sanitization on inbound attachments.** Original
+  Telegram-supplied filenames are reduced to `[A-Za-z0-9._-]` before
+  being joined to the inbox path. Path-separator injection is not
+  possible.
+- **Text sanitization before tmux delivery.** C0 control characters are
+  stripped and runs of newlines are collapsed to a single space, so a
+  message body can't escape its prompt line or inject escape sequences.
+- **No outbound side-channel.** The daemon never reads or writes outside
+  `~/.tg/`. The install command writes to `~/.config/systemd/user/` and
+  optionally `~/.ir/tools/`, both with clear console output.
 
-## What this is NOT
+What's **not** in v0.1's threat model:
 
-- Not a Telegram client library — uses the Bot API only.
-- Not a group-chat tool — DM-only for v1.
-- Not multi-bot or multi-user.
-- Not an MCP server — outbound is a regular CLI command. If you want
-  agent-callable outbound, your agent can shell out to `tg send` (e.g.
-  via Claude Code's `Bash` tool, or your own subprocess wrapper).
+- An attacker with shell access on the same user account can read
+  `config.toml`. Use proper file-system permissions and don't ship the
+  config in a Docker layer.
+- An attacker who controls the Telegram account that's already
+  allowlisted can inject text into your tmux pane. The sanitization
+  prevents escape sequences and multi-line injection, but the text
+  itself is whatever the attacker types. If your tmux pane is running
+  an agent that can take destructive actions, vet your allowlist.
 
 ## Architecture
 
 Single binary, subcommands (`git`-style). Synchronous HTTP via `ureq`,
-no tokio: the listen daemon is a blocking long-poll loop; the outbound
-CLI is one-shot. State persistence is atomic temp-file + rename.
+no tokio. The listen daemon is a blocking long-poll loop; the outbound
+CLI is one-shot. State persistence is atomic temp-file + rename in
+every location that holds bytes that matter.
+
+```
+┌────────────┐  long-poll   ┌────────┐
+│ Telegram   │ ───────────▶ │ tg     │
+│ Bot API    │              │ listen │
+└────────────┘ ◀─────────── │        │ ──── tmux send-keys ──▶ ┌──────────┐
+                  reply     └────────┘     stdin              │ tmux pane│
+                                                              │ (shell / │
+                                                              │ TUI /    │
+                                                              │ agent)   │
+                                                              └──────────┘
+```
 
 See [`docs/design.md`](docs/design.md) for the full spec and
 [`docs/plan.md`](docs/plan.md) for the task-by-task build plan that
-produced the v0.1 implementation.
+produced the v0.1 implementation. The plan is broken into 17 TDD tasks
+that an unfamiliar engineer (or an agent) could execute end-to-end.
 
 ## Testing
 
@@ -180,8 +246,132 @@ tmux with a fake-shim shell script that records its argv. Unit tests
 serialize their `TG_HOME` env-var mutation through a process-wide
 mutex, so `cargo test` is safe at default parallelism.
 
-See [`docs/smoke.md`](docs/smoke.md) for the end-to-end manual
-verification checklist.
+[`docs/smoke.md`](docs/smoke.md) is an 11-step manual checklist that
+verifies the binary against the real Telegram API + a real tmux. Run
+it once after building before declaring a release usable.
+
+## Troubleshooting
+
+**`tg-listen` exits immediately with code 1.**
+Check `journalctl --user -u tg-listen -n 20`. The most common cause is
+a bad bot token (the daemon catches HTTP 401 and exits cleanly so
+systemd surfaces it). Re-run `tg init --force` and re-paste the token,
+double-checking for trailing whitespace.
+
+**`config.toml mode is XXX; refusing to read (must be 0600)`.**
+The file's permissions got widened, probably by a backup tool or an
+editor. `chmod 600 ~/.tg/config.toml`.
+
+**Bot replies "Pairing required" but I never get the message in my
+pane.**
+Either: you haven't run `tg pair XXXXXX` yet, or the pairing code is
+expired (1-hour TTL — DM again to get a fresh one), or your chat_id
+got allowlisted but the pane no longer matches `tmux_target`. Verify
+with `tg list` and `tmux has-session -t <target>`.
+
+**Both my bun MCP plugin and `tg listen` are running.**
+Telegram's Bot API rejects concurrent long-polls — only one client can
+hold the connection. If you migrated from the bun plugin, disable it
+in `~/.claude/settings.json` (set
+`"telegram@claude-plugins-official": false` under `enabledPlugins`)
+**before** starting `tg listen`.
+
+**Send fails with `Bad Request: chat not found`.**
+The chat_id you passed isn't in the bot's known chats. Telegram only
+exposes a chat_id to the bot after that chat has DM'd the bot at least
+once (or you've been added to a group with the bot).
+
+**`tg install` says `~/.ir/tools/tg exists and is not a symlink`.**
+You have a different binary at that path. Resolve manually — either
+`rm` it or move it out of the way; then re-run `tg install`.
+
+**The systemd unit isn't auto-starting at boot.**
+Lingering must be enabled for user services to start without a login:
+`sudo loginctl enable-linger $USER`. Otherwise `tg-listen` only runs
+during your active sessions.
+
+## FAQ
+
+**Why `tmux send-keys` rather than IPC / DBus / a tool-call protocol?**
+Send-keys works on every TUI without modification. The agent / shell /
+editor in the pane doesn't need to know `tg` exists — it just sees
+"the user typed something." That's a vastly smaller integration
+surface than wiring a tool-call protocol into every possible target.
+
+**Why not just be an MCP server?**
+MCP servers run only while their host (e.g. Claude Code) is alive,
+and the notification channel for inbound messages turned out to be
+unreliable on Claude Code as of 2026-05. Send-keys sidesteps the whole
+host-integration problem.
+
+**Can I use this without Claude Code / agents?**
+Yes. The binary doesn't know about Claude Code. Point `tmux_target` at
+any tmux pane (a shell, a REPL, Vim, anything) and inbound messages
+get typed there.
+
+**Does this work with group chats?**
+Not in v0.1 — DM-only by design. Group support is on the roadmap.
+
+**Why ureq and not reqwest?**
+The daemon is a single blocking poll loop. ureq is sync, much smaller,
+no tokio runtime, faster compile. There's no concurrent work to gain
+from async here.
+
+**Can I run two bots side-by-side?**
+Not from one install of `tg`. Each `~/.tg/` is single-bot. You'd need
+two separate `TG_HOME` directories and two systemd units. The code
+supports it via the env var but the install command doesn't.
+
+**Is this published on crates.io?**
+Not currently — the name `tg` is already taken. If you want
+`cargo install tg`-style installation, open an issue with a rename
+proposal (`tgcli`, `tg-bot`, etc.) and we'll consider it.
+
+## Roadmap
+
+Possible v0.2 directions, none committed:
+
+- Group chat support (different access model — per-group allowlist).
+- Reactions and message edits (the Telegram Bot API supports both;
+  surface as `tg react` and `tg edit-message`).
+- Inbox cleanup / age-out policy for `~/.tg/inbox/`.
+- Bracketed-paste mode for tmux send-keys so the target app can
+  distinguish typed input from injected input.
+- `tg send` reading text from stdin (`echo body | tg send --chat-id N`).
+- Multi-bot support (`tg --home /alt/.tg listen`).
+
+If you want any of these and would use them, open an issue describing
+your use case.
+
+## Contributing
+
+Pull requests welcome. Before opening one:
+
+- Read [`docs/design.md`](docs/design.md). It's the source of truth for
+  what's in scope.
+- Run `cargo test` and `cargo build --release` — both must pass.
+- Stay within the v0.1 architectural boundaries (single binary, no
+  tokio, no MCP). New deps need a justification.
+- Add a test for any new behavior — unit if pure, integration if it
+  touches the binary as a process. Look at `tests/outbound.rs` for the
+  pattern.
+
+For larger changes: open an issue first to talk through the design.
+
+The repo is small and well-commented; `git log --oneline` reads as a
+TDD progression matching `docs/plan.md`.
+
+## Acknowledgments
+
+The interface (per-chat allowlist, pairing flow, `notifications/claude/channel`
+shape) was directly inspired by the official Claude Code Telegram MCP
+plugin in [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official).
+`tg` re-implements the same concepts as a self-contained Rust CLI
+because I wanted a delivery mechanism that didn't depend on a
+host-side notification channel.
+
+The send-keys-into-tmux trick has been used by many people before me
+for many purposes. I learned it from the Anthropic plugin's source.
 
 ## License
 

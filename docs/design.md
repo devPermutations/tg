@@ -118,11 +118,11 @@ submits.
 ## Outbound flow — `tg send`
 
 ```
-tg send --chat-id 8583339367 --text "hello"
-tg send --chat-id 8583339367 --text "look at this" --file /tmp/shot.png
-tg send --chat-id 8583339367 --text "report" --file q3.pdf --file q4.pdf
-tg send --chat-id 8583339367 --text "*bold*" --format markdownv2
-tg send --chat-id 8583339367 --text "reply" --reply-to 535
+tg send --chat-id 1234567890 --text "hello"
+tg send --chat-id 1234567890 --text "look at this" --file /tmp/shot.png
+tg send --chat-id 1234567890 --text "report" --file q3.pdf --file q4.pdf
+tg send --chat-id 1234567890 --text "*bold*" --format markdownv2
+tg send --chat-id 1234567890 --text "reply" --reply-to 535
 ```
 
 Dispatch:
@@ -150,12 +150,12 @@ bot_token = "..."
 tmux_target = "root:1"
 
 [[allow]]
-chat_id = 8583339367
-label = "virgil"
+chat_id = 1234567890
+label = "alice"
 
 [[allow]]
-chat_id = 8598991658
-label = "tim"
+chat_id = 9876543210
+label = "bob"
 ```
 
 - File mode `0o600` (token-bearing). `tg` refuses to start if mode is wider.
@@ -171,9 +171,9 @@ label = "tim"
 
 ```json
 {
-  "8598991658": {
+  "9876543210": {
     "code": "K7M3P2",
-    "username": "tim",
+    "username": "bob",
     "first_seen_at": "2026-05-28T00:42:11Z",
     "expires_at": "2026-05-28T01:42:11Z",
     "last_reminder_at": "2026-05-28T00:42:11Z"
@@ -250,7 +250,7 @@ Bootstrap:
 cargo install --path ~/projects/tg
 tg install
 tg init                       # writes config.toml
-tg allow --chat-id 8583339367 --label virgil
+tg allow --chat-id 1234567890 --label alice
 systemctl --user start tg-listen
 journalctl --user -u tg-listen -f
 ```
