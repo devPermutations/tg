@@ -95,7 +95,7 @@ pub fn pair(code: &str, api_base: &str) -> Result<()> {
     // Notify on Telegram. Failure here doesn't roll back the pairing —
     // the chat_id is allowed regardless of whether the reply went out.
     let client = Client::new(api_base, cfg.bot_token.clone());
-    if let Err(e) = client.send_message(chat_id, "Paired. You can now send messages.") {
+    if let Err(e) = client.send_message(chat_id, "Paired. You can now send messages.", None, None) {
         tracing::warn!("pair confirm reply failed for {chat_id}: {e}");
     }
     println!("paired chat_id {chat_id}");

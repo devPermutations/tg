@@ -17,10 +17,6 @@ pub fn pending_path() -> PathBuf { tg_home().join("pending.json") }
 pub fn state_path() -> PathBuf { tg_home().join("state") }
 pub fn inbox_dir() -> PathBuf { tg_home().join("inbox") }
 
-pub fn ensure_dir(p: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(p)
-}
-
 /// Refuses to read paths whose mode is wider than 0600. Used by any
 /// module that loads a secret/token-bearing file.
 pub fn check_mode_strict(path: &Path) -> Result<()> {

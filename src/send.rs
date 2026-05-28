@@ -23,7 +23,7 @@ pub fn run(opts: SendOpts, api_base: &str) -> Result<()> {
     if opts.files.is_empty() {
         let text = opts.text
             .ok_or_else(|| anyhow::anyhow!("--text required when no --file given"))?;
-        let m = client.send_message(opts.chat_id, &text)?;
+        let m = client.send_message(opts.chat_id, &text, opts.format.as_deref(), opts.reply_to)?;
         println!("sent (id: {})", m.message_id);
         return Ok(());
     }

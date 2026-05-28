@@ -68,7 +68,7 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
 
     // Allowed — check tmux target.
     if !tmux::target_alive(tmux_bin, &cfg.tmux_target) {
-        let _ = client.send_message(chat_id, "agent offline (Claude Code not running)");
+        let _ = client.send_message(chat_id, "agent offline (Claude Code not running)", None, None);
         tracing::warn!("dropping inbound from {chat_id}: tmux target {} not alive", cfg.tmux_target);
         return Ok(());
     }
@@ -169,7 +169,7 @@ fn handle_gated(client: &Client, chat_id: i64, username: Option<&str>) -> Result
     }
 
     if let Some(text) = needs_send_message {
-        let _ = client.send_message(chat_id, &text);
+        let _ = client.send_message(chat_id, &text, None, None);
     }
     Ok(())
 }

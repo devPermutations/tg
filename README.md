@@ -27,7 +27,7 @@ systemctl --user start tg-listen
 | `tg list` | Print allowlist |
 | `tg pair <code>` | Confirm a pending pairing |
 | `tg pending` | List pending pairings |
-| `tg reject` | Drop a pending pairing silently |
+| `tg reject --chat-id N` | Drop a pending pairing silently (no Telegram reply) |
 
 ## Documentation
 

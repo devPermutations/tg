@@ -54,10 +54,24 @@ impl Client {
         self.post_json("getUpdates", &body)
     }
 
-    pub fn send_message(&self, chat_id: i64, text: &str) -> Result<Message> {
+    pub fn send_message(
+        &self, chat_id: i64, text: &str,
+        parse_mode: Option<&str>, reply_to: Option<i64>,
+    ) -> Result<Message> {
         #[derive(Serialize)]
-        struct Req<'a> { chat_id: i64, text: &'a str }
-        self.post_json("sendMessage", &Req { chat_id, text })
+        struct Req<'a> {
+            chat_id: i64,
+            text: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            parse_mode: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            reply_to_message_id: Option<i64>,
+        }
+        self.post_json("sendMessage", &Req {
+            chat_id, text,
+            parse_mode,
+            reply_to_message_id: reply_to,
+        })
     }
 
     /// POST multipart/form-data with one file field. Used for
@@ -263,7 +277,7 @@ mod tests {
                 .unwrap();
         });
         let c = Client::new(base, "TOKEN");
-        let m = c.send_message(1, "hi").unwrap();
+        let m = c.send_message(1, "hi", None, None).unwrap();
         assert_eq!(m.message_id, 42);
         join.join().unwrap();
     }
@@ -277,7 +291,7 @@ mod tests {
                 .unwrap();
         });
         let c = Client::new(base, "TOKEN");
-        let err = c.send_message(1, "hi").unwrap_err().to_string();
+        let err = c.send_message(1, "hi", None, None).unwrap_err().to_string();
         assert!(err.contains("chat not found"), "got: {err}");
         join.join().unwrap();
     }
