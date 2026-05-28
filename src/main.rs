@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 mod paths;
 mod config;
 mod pending;
+mod tmux;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
