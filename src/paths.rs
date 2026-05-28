@@ -26,14 +26,16 @@ mod tests {
     #[test]
     fn tg_home_uses_override() {
         std::env::set_var("TG_HOME", "/tmp/tg-test-xyz");
-        assert_eq!(tg_home(), PathBuf::from("/tmp/tg-test-xyz"));
+        let got = tg_home();
         std::env::remove_var("TG_HOME");
+        assert_eq!(got, PathBuf::from("/tmp/tg-test-xyz"));
     }
 
     #[test]
     fn config_path_is_under_home() {
         std::env::set_var("TG_HOME", "/tmp/x");
-        assert_eq!(config_path(), PathBuf::from("/tmp/x/config.toml"));
+        let got = config_path();
         std::env::remove_var("TG_HOME");
+        assert_eq!(got, PathBuf::from("/tmp/x/config.toml"));
     }
 }
