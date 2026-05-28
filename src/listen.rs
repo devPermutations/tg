@@ -66,7 +66,15 @@ fn handle_update(u: Update, cfg: &Config, client: &Client, tmux_bin: &str) -> Re
         return handle_gated(client, chat_id, user_label.as_deref());
     }
 
-    // Allowed — check tmux target.
+    // Outbound-only contact: allowlisted, but not the owner. Silent
+    // drop — no tmux injection, no Telegram reply (we don't want to
+    // ack contact-list members about messages we ignored).
+    if !cfg.delivers_inbound(chat_id) {
+        tracing::info!("dropping inbound from {chat_id}: outbound-only contact (not owner)");
+        return Ok(());
+    }
+
+    // Allowed and is owner — check tmux target.
     if !tmux::target_alive(tmux_bin, &cfg.tmux_target) {
         let _ = client.send_message(chat_id, "agent offline (Claude Code not running)", None, None);
         tracing::warn!("dropping inbound from {chat_id}: tmux target {} not alive", cfg.tmux_target);

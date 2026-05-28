@@ -149,19 +149,29 @@ integration tests point `tg send` at a local mock.
 bot_token = "..."
 tmux_target = "root:1"
 
+# Optional. If set, only the owner's DMs are delivered to the tmux
+# pane. All other [[allow]] entries become outbound-only — they can
+# receive messages from `tg send` but their inbound DMs are silently
+# dropped. If omitted, every allowlisted sender delivers (pre-0.2
+# behavior).
+owner_chat_id = 1234567890
+
 [[allow]]
 chat_id = 1234567890
 label = "alice"
 
 [[allow]]
 chat_id = 9876543210
-label = "bob"
+label = "bob"           # outbound-only because not owner
 ```
 
 - File mode `0o600` (token-bearing). `tg` refuses to start if mode is wider.
-- `tg init` is interactive: prompts for bot token (or `--token`) and
-  tmux target (default `root:1`), writes the file. Allowlist starts empty.
+- `tg init` is interactive: prompts for bot token (or `--token`),
+  tmux target (default `root:1`), and optionally accepts
+  `--owner-chat-id`. Allowlist starts empty.
 - `tg allow --chat-id N [--label foo]` — append; refuse duplicate chat_id.
+- `tg set-owner --chat-id N` — designate the inbound-delivery owner.
+- `tg set-owner --unset` — revert to "everyone in allowlist delivers".
 - `tg deny --chat-id N` — remove.
 - `tg list` — print.
 

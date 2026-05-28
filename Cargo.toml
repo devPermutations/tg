@@ -1,6 +1,6 @@
 [package]
 name = "tg"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Self-contained Telegram bot CLI: inbound daemon types incoming messages into a tmux pane via send-keys; outbound CLI sends text and attachments."
 license = "MIT"

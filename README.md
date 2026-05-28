@@ -74,7 +74,9 @@ tg install   # symlinks ~/.cargo/bin/tg into ~/.ir/tools/ (if dir exists),
              # installs + enables ~/.config/systemd/user/tg-listen.service
 
 tg init      # writes ~/.tg/config.toml at mode 0600;
-             # prompts for token and tmux target (default: root:1)
+             # prompts for token and tmux target (default: root:1);
+             # pass --owner-chat-id N to lock inbound delivery to one chat
+             # (everyone else added later becomes outbound-only)
 
 systemctl --user start tg-listen
 journalctl --user -u tg-listen -f          # tail logs
@@ -112,9 +114,17 @@ $ tg pair K7M3P2
 paired chat_id 9876543210
 
 $ tg list
-1234567890	alice
+1234567890	alice	(owner)
 9876543210	bob
 ```
+
+`alice` is the owner — her DMs deliver to the tmux pane. `bob` is in
+the allowlist but is **outbound-only**: `tg send --chat-id 9876543210`
+works for him, but if he DMs the bot his messages are silently dropped.
+
+To designate or change the owner: `tg set-owner --chat-id N` (or `tg
+set-owner --unset` to revert to "everyone in the allowlist delivers",
+the v0.1 behavior).
 
 Incoming text messages appear in your tmux pane as:
 
@@ -133,13 +143,14 @@ the path is appended to the typed line:
 
 | Command | Purpose |
 | --- | --- |
-| `tg init` | Write `~/.tg/config.toml` (interactive, or via `--token` / `--tmux-target` / `--force`) |
+| `tg init` | Write `~/.tg/config.toml` (interactive, or via `--token` / `--tmux-target` / `--owner-chat-id` / `--force`) |
 | `tg install` | Symlink binary into `~/.ir/tools/` if present, install + enable systemd user unit |
 | `tg listen` | Inbound daemon (usually run via systemd, not directly) |
 | `tg send` | Outbound: `--chat-id N --text "..."`, optional repeated `--file PATH`, `--format markdownv2`, `--reply-to MSGID` |
 | `tg allow` | `--chat-id N [--label foo]` — append to allowlist |
 | `tg deny` | `--chat-id N` — remove from allowlist |
-| `tg list` | Print allowlist |
+| `tg list` | Print allowlist (owner-tagged) |
+| `tg set-owner` | `--chat-id N` to designate the inbound-delivery owner; `--unset` to revert |
 | `tg pair <code>` | Confirm a pending pairing |
 | `tg pending` | List pending pairings (code, chat_id, label, expiry) |
 | `tg reject` | `--chat-id N` — drop a pending pairing silently |
@@ -154,9 +165,19 @@ Every subcommand supports `--help`.
 bot_token = "..."
 tmux_target = "root:1"
 
+# Optional. If set, only this chat_id's DMs are typed into the tmux pane.
+# Other [[allow]] entries become outbound-only (you can `tg send` them but
+# their DMs are silently dropped). If omitted, every allowlisted sender
+# delivers — pre-0.2 behavior.
+owner_chat_id = 1234567890
+
 [[allow]]
 chat_id = 1234567890
 label = "alice"
+
+[[allow]]
+chat_id = 9876543210
+label = "bob"           # outbound-only because not the owner
 ```
 
 Runtime layout under `~/.tg/`:
@@ -187,6 +208,11 @@ listen` with `Restart=always, RestartSec=5`. Logs go to journald.
   one response: a pairing reminder, throttled to once per 30 seconds
   per chat. The bot does not echo errors, does not confirm receipt of
   messages it dropped, and does not reveal who's allowlisted.
+- **Owner-only inbound delivery.** With `owner_chat_id` set, only the
+  owner's DMs are typed into the tmux pane. Other allowlisted contacts
+  can be `tg send`-ed to but their inbound DMs are silently dropped —
+  the agent in the pane never sees them. This stops contact-list
+  members from injecting prompts into whatever's running in the pane.
 - **Pairing code strength.** 6 alphanumeric uppercase characters
   (`[A-Z0-9]`), 36⁶ ≈ 2.2B possibilities, expires in 1 hour, rate-limited
   by the once-per-30s reminder cadence. The `tg pair` confirmation runs

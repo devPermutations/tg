@@ -9,6 +9,7 @@ use crate::paths;
 pub struct InitOpts {
     pub token: Option<String>,
     pub tmux_target: Option<String>,
+    pub owner_chat_id: Option<i64>,
     pub force: bool,
 }
 
@@ -40,10 +41,18 @@ pub fn run(opts: InitOpts) -> Result<()> {
     let cfg = Config {
         bot_token: token,
         tmux_target,
+        owner_chat_id: opts.owner_chat_id,
         allow: vec![],
     };
     cfg.save(&path)?;
     println!("wrote {} (mode 0600)", path.display());
+    if cfg.owner_chat_id.is_none() {
+        println!(
+            "note: no owner_chat_id set. All allowlisted senders will deliver \
+            to your tmux pane. Run `tg set-owner --chat-id N` to lock inbound \
+            delivery to a single chat."
+        );
+    }
     Ok(())
 }
 
@@ -65,6 +74,26 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn writes_config_with_owner() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        std::env::set_var("TG_HOME", dir.path());
+        let opts = InitOpts {
+            token: Some("TOKEN".into()),
+            tmux_target: Some("root:1".into()),
+            owner_chat_id: Some(42),
+            force: false,
+        };
+        let run_result = run(opts);
+        let cfg_path = paths::config_path();
+        std::env::remove_var("TG_HOME");
+
+        run_result.unwrap();
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.owner_chat_id, Some(42));
+    }
+
+    #[test]
     fn writes_config_with_flags() {
         let _g = crate::paths::test_lock::acquire();
         let dir = tempdir().unwrap();
@@ -72,6 +101,7 @@ mod tests {
         let opts = InitOpts {
             token: Some("TOKEN".into()),
             tmux_target: Some("root:1".into()),
+            owner_chat_id: None,
             force: false,
         };
         let run_result = run(opts);
@@ -90,10 +120,12 @@ mod tests {
         let dir = tempdir().unwrap();
         std::env::set_var("TG_HOME", dir.path());
         let first = run(InitOpts {
-            token: Some("A".into()), tmux_target: Some("x".into()), force: false,
+            token: Some("A".into()), tmux_target: Some("x".into()),
+            owner_chat_id: None, force: false,
         });
         let second = run(InitOpts {
-            token: Some("B".into()), tmux_target: Some("y".into()), force: false,
+            token: Some("B".into()), tmux_target: Some("y".into()),
+            owner_chat_id: None, force: false,
         });
         std::env::remove_var("TG_HOME");
 

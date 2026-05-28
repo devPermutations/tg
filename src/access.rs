@@ -36,13 +36,38 @@ pub fn deny(chat_id: i64) -> Result<()> {
 
 pub fn list() -> Result<()> {
     let cfg = Config::load(&paths::config_path())?;
-    if cfg.allow.is_empty() {
-        println!("(allowlist empty)");
+    if cfg.allow.is_empty() && cfg.owner_chat_id.is_none() {
+        println!("(allowlist empty, no owner set)");
         return Ok(());
+    }
+    if let Some(owner) = cfg.owner_chat_id {
+        if !cfg.allow.iter().any(|e| e.chat_id == owner) {
+            println!("{}\t(owner, no allow entry)\t(owner)", owner);
+        }
     }
     for e in &cfg.allow {
         let label = e.label.as_deref().unwrap_or("(no label)");
-        println!("{}\t{}", e.chat_id, label);
+        let suffix = if cfg.is_owner(e.chat_id) { "\t(owner)" } else { "" };
+        println!("{}\t{}{}", e.chat_id, label, suffix);
+    }
+    Ok(())
+}
+
+pub fn set_owner(chat_id: Option<i64>, unset: bool) -> Result<()> {
+    let path = paths::config_path();
+    let mut cfg = Config::load(&path)?;
+    match (chat_id, unset) {
+        (Some(id), false) => {
+            cfg.owner_chat_id = Some(id);
+            cfg.save(&path)?;
+            println!("owner_chat_id set to {id}");
+        }
+        (None, true) => {
+            cfg.owner_chat_id = None;
+            cfg.save(&path)?;
+            println!("owner_chat_id unset (all allowlisted senders will deliver)");
+        }
+        _ => return Err(anyhow!("pass exactly one of --chat-id N or --unset")),
     }
     Ok(())
 }
@@ -145,6 +170,7 @@ mod tests {
         let cfg = Config {
             bot_token: "T".into(),
             tmux_target: "x".into(),
+            owner_chat_id: None,
             allow: vec![],
         };
         cfg.save(&paths::config_path()).unwrap();
@@ -231,6 +257,35 @@ mod tests {
 
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown"));
+    }
+
+    #[test]
+    fn set_owner_persists() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        seed(dir.path());
+        let set_result = set_owner(Some(99), false);
+        let cfg_after_set = Config::load(&paths::config_path());
+        let unset_result = set_owner(None, true);
+        let cfg_after_unset = Config::load(&paths::config_path());
+        std::env::remove_var("TG_HOME");
+
+        set_result.unwrap();
+        assert_eq!(cfg_after_set.unwrap().owner_chat_id, Some(99));
+        unset_result.unwrap();
+        assert_eq!(cfg_after_unset.unwrap().owner_chat_id, None);
+    }
+
+    #[test]
+    fn set_owner_rejects_both_and_neither() {
+        let _g = crate::paths::test_lock::acquire();
+        let dir = tempdir().unwrap();
+        seed(dir.path());
+        let neither = set_owner(None, false);
+        std::env::remove_var("TG_HOME");
+
+        let err = neither.unwrap_err().to_string();
+        assert!(err.contains("exactly one"));
     }
 
     #[test]

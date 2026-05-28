@@ -36,6 +36,11 @@ enum Command {
     Init {
         #[arg(long)] token: Option<String>,
         #[arg(long)] tmux_target: Option<String>,
+        /// chat_id that owns this bot. Only the owner's DMs are delivered
+        /// to the tmux pane; everyone else added via `tg allow` is
+        /// outbound-only. Optional — if omitted, all allowlisted senders
+        /// deliver (pre-0.2 behavior).
+        #[arg(long = "owner-chat-id")] owner_chat_id: Option<i64>,
         #[arg(long)] force: bool,
     },
     /// Symlink into ~/.ir/tools/ and install + enable the systemd unit.
@@ -61,6 +66,15 @@ enum Command {
     },
     /// Print the current allowlist.
     List,
+    /// Set or unset the owner chat_id. The owner is the single sender
+    /// whose DMs are delivered to the tmux pane; everyone else is
+    /// outbound-only.
+    SetOwner {
+        /// chat_id to designate as owner.
+        #[arg(long, conflicts_with = "unset")] chat_id: Option<i64>,
+        /// Remove the current owner (revert to "everyone in allowlist delivers").
+        #[arg(long, conflicts_with = "chat_id")] unset: bool,
+    },
     /// Confirm a pending pairing by code.
     Pair { code: String },
     /// List pending pairings.
@@ -78,8 +92,8 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Init { token, tmux_target, force } =>
-            init::run(init::InitOpts { token, tmux_target, force }),
+        Command::Init { token, tmux_target, owner_chat_id, force } =>
+            init::run(init::InitOpts { token, tmux_target, owner_chat_id, force }),
         Command::Install => install::run(install::InstallOpts {
             systemctl_bin: cli.systemctl_bin.clone(),
             dry_run: false,
@@ -90,6 +104,7 @@ fn main() -> anyhow::Result<()> {
         Command::Allow { chat_id, label } => access::allow(chat_id, label),
         Command::Deny { chat_id } => access::deny(chat_id),
         Command::List => access::list(),
+        Command::SetOwner { chat_id, unset } => access::set_owner(chat_id, unset),
         Command::Pair { code } => access::pair(&code, &cli.api_base),
         Command::Pending => access::pending(),
         Command::Reject { chat_id } => access::reject(chat_id),
