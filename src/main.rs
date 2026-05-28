@@ -4,6 +4,7 @@ mod paths;
 mod config;
 mod pending;
 mod tmux;
+mod api;
 
 #[derive(Parser)]
 #[command(name = "tg", about = "Telegram bot CLI: daemon + outbound", version)]
